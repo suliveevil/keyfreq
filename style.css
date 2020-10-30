@@ -11,13 +11,13 @@ canvas {
     display: block;
 }
 table {
-  border-collapse: collapse;
-  width: 100%;
+    border-collapse: collapse;
+    width: 100%;
 }
 
 table td, table th {
-  border: 1px solid #ddd;
-  padding: 8px;
+    border: 1px solid #ddd;
+    padding: 8px;
 }
 
 table tr:nth-child(even){background-color: #f2f2f2;}
@@ -25,11 +25,11 @@ table tr:nth-child(even){background-color: #f2f2f2;}
 table tr:hover {background-color: #ddd;}
 
 table th {
-  padding-top: 12px;
-  padding-bottom: 12px;
-  text-align: left;
-  background-color: #3C433C;
-  color: white;
+    padding-top: 12px;
+    padding-bottom: 12px;
+    text-align: left;
+    background-color: #3C433C;
+    color: white;
 }
 .header{
     width:20%;
@@ -79,12 +79,12 @@ h1{
     text-transform: uppercase;
 }
 h2{
-margin: 1em 0 .6em 0;
-padding: 0 0 0 20px;
-font-weight: normal;
-position: relative;
-font-size: 30px;
-line-height: 40px;
+    margin: 1em 0 .6em 0;
+    padding: 0 0 0 20px;
+    font-weight: normal;
+    position: relative;
+    font-size: 30px;
+    line-height: 40px;
 }
 h2::after{
     position: absolute;
@@ -97,4 +97,42 @@ h2::after{
 }
 h2::after{
     background: #cb0000;
+}
+.skipEl{
+    position:fixed;
+    top:0;
+    line-height:60px;
+    background-color:#aaa;
+    color: white;
+    font-weight: bold;
+}
+
+.content, .skipEl{
+    margin: 0; padding:0;
+    width:80%;
+    margin-left:20%;
+    padding-left: 30px;
+}
+.content{
+    margin-top:80px; /* Offset with skipEl lineheight*/
+}
+
+input {
+    border: 1px solid white; 
+    padding: 10px;
+    background: rgba(255,255,255,0.5);
+    margin: 0;
+    margin-left: 20px;
+    margin-right: 20px;
+}
+button{
+    font-weight: bold;
+    background-color: #cb0000;
+    border: none;
+    padding: 5px 30px 5px 30px;
+    cursor: pointer;
+    color: white;
+}
+button:hover{
+    background-color: green;
 }

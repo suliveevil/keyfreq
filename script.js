@@ -228,7 +228,7 @@ var update_skip = function(){
 	}
     };
     
-    document.body.innerHTML +='<div style="position:fixed; top:0; right:50%; padding:20px;">' +
+    document.body.innerHTML +='<div class="skipEl">' +
 	'<label for="skipkeys"> Skip keys: </label>' + 
 	'<input name="skipkeys" type="text" placeholder="Skip keys (e.g. [\'C\', \'S\', \'M\'])" id="skipkeys">' +
 	'<button onclick="update_skip()">OK</button>' + 
