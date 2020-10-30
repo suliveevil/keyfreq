@@ -345,7 +345,8 @@ is used as MAJOR-MODE-SYMBOL argument."
 (defun keyfreq-html-v2 ()
   "Save an HTML file with all the statistics of each mode."
   (interactive)
-  (let ((filename (make-temp-file "keyfreq"))
+  (let ((filename (concat temporary-file-directory (make-temp-name "keyfreq_") ".html"))
+	(filenameScript (concat (file-name-as-directory keyfreq-folder) "script.js"))
 	(table (copy-hash-table keyfreq-table))
 	(htmltable (lambda (list id)
 		     (insert (concat "<table id=\"" id "\">\n"))
@@ -356,7 +357,9 @@ is used as MAJOR-MODE-SYMBOL argument."
 					    (insert (format "<tr><td>%d</td><td>%.2f%%</td><td>%s</td><td><xmp count=%d>%s</xmp></td></tr>\n" count perc command count (keyfreq-where-is command)))))
 		     (insert "</tbody>\n")
 		     (insert "</table>\n"))))
-
+    ;; copy script file
+    (unless (file-exists-p (concat temporary-file-directory "keyfreq_script.js"))
+      (copy-file  filenameScript (concat temporary-file-directory "keyfreq_script.js")))
     ;; Merge with the values in `keyfreq-file'
     (keyfreq-table-load table)
 
@@ -393,7 +396,7 @@ is used as MAJOR-MODE-SYMBOL argument."
        (keyfreq-used-major-modes table))
       (insert "];\n")
       (insert "</script>\n")
-      (insert (format "<script type=\"text/javascript\" src=\"%s\"></script>" (concat keyfreq-folder "script.js")))
+      (insert (format "<script type=\"text/javascript\" src=\"keyfreq_script.js\"></script>" ))
       (insert "</body>\n</html>\n"))
     (browse-url filename)))
 
