@@ -16,8 +16,7 @@ let keyboardHeatMapGenerator = {
 	return "rgb("+r+","+g+","+b+")";
     },
     compute:function(){
-	console.log(this.id + ' xmp');
-	var el = document.querySelector(this.id + ' xmp');
+	var el = document.querySelectorAll(this.id + ' xmp');
 	//var el = $(this.id + ' xmp');
 	this.totalCount = 0;
 	for(var iShortcut=0; iShortcut < el.length; iShortcut++){
@@ -26,18 +25,23 @@ let keyboardHeatMapGenerator = {
 	    var cmds = str.replace('..', ',').split(',');
 	    var alreadyCounted = {};
 	    for(var iCmd = 0; iCmd < cmds.length; iCmd++){
-		var keys = cmds[iCmd].split('-');
-		for(var iKey = 0; iKey < keys.length; iKey++){
-		    var subkeys = keys[iKey].split(' ');
-		    for(var iSubKey = 0; iSubKey < subkeys.length; iSubKey++){
-			var s=subkeys[iSubKey].replace(/[<>]/gi, '');
-			if(s != "" && !skip.includes(s) && alreadyCounted[s] == undefined){
-			    if(this.frequency[s] == undefined){
-				this.frequency[s] = count;
-			    }else{
-				this.frequency[s] = this.frequency[s] + count;
+		var cmd = cmds[iCmd].replace(/<(.*)>/gi, "$1");
+		if (cmd.includes("mouse")) {
+		 // Special process for mouse events (todo)
+		}else{
+		    var keys = cmd.split('-');
+		    for(var iKey = 0; iKey < keys.length; iKey++){
+			var subkeys = keys[iKey].split(' ');
+			for(var iSubKey = 0; iSubKey < subkeys.length; iSubKey++){
+			    var s=subkeys[iSubKey];
+			    if(s != "" && !skip.includes(s) && alreadyCounted[s] == undefined){
+				if(this.frequency[s] == undefined){
+				    this.frequency[s] = count;
+				}else{
+				    this.frequency[s] = this.frequency[s] + count;
+				}
+				alreadyCounted[s] = true;
 			    }
-			    alreadyCounted[s] = true;
 			}
 		    }
 		}
@@ -64,7 +68,11 @@ let keyboardHeatMapGenerator = {
 	var maxY = 0;
 	for(var iKey=0; iKey < this.keyboard.length; iKey++){
 	    const key = this.keyboard[iKey];
-	    var freq = this.frequency[key.name]
+	    var freq = 0;
+	    for (var iName = 0; iName < key.name.length; iName++) {
+		freq = freq + this.frequency[key.name[iName]];
+	    }
+
 	    this.context.fillStyle = this.cmap((freq - this.min_frequency) / (this.max_frequency - this.min_frequency));
 	    this.context.fillRect(key.x * this.u, key.y * this.u, key.width * this.u, key.height * this.u);
 	    this.context.strokeRect(key.x * this.u, key.y * this.u, key.width * this.u, key.height * this.u);
@@ -220,13 +228,11 @@ var update_skip = function(){
 	}
     };
     
-    $('body').append('<div style="position:fixed; top:0; right:50%; padding:20px;">' +
-		     '<label for="skipkeys"> Skip keys: </label>' + 
-		     '<input name="skipkeys" type="text" placeholder="Skip keys (e.g. [\'C\', \'S\', \'M\'])" id="skipkeys">' +
-		     '<button onclick="update_skip()">OK</button>' + 
-		     '</div>');
+    document.body.innerHTML +='<div style="position:fixed; top:0; right:50%; padding:20px;">' +
+	'<label for="skipkeys"> Skip keys: </label>' + 
+	'<input name="skipkeys" type="text" placeholder="Skip keys (e.g. [\'C\', \'S\', \'M\'])" id="skipkeys">' +
+	'<button onclick="update_skip()">OK</button>' + 
+	'</div>';
     generate_drawings();
 
 })();
-
-
