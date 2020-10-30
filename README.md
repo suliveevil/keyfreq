@@ -14,6 +14,8 @@ remove `Ctrl` and `a` key from the heat map count.
 ![Screenshot](https://github.com/KirmTwinty/keyfreq/raw/master/screenshot/keyfreq-html-v2.png
 "Screenshot of the new rendered page")
 
+You need Javascript to be enabled in your web browser.
+
 ## Drawbacks
 
 1. I am not a web developer so sorry for the non-responsive web design.
