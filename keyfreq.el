@@ -113,6 +113,10 @@ various keyfreq-* functions."
   :group 'keyfreq
   :type 'string)
 
+(defcustom keyfreq-folder (file-name-directory (or load-file-name buffer-file-name))
+  "Where keyfreq is installed to retrieve the script.js file."
+  :group 'keyfreq
+  :type 'string)
 
 (defcustom keyfreq-file "~/.emacs.keyfreq"
   "File `keyfreq-table' is saved to/loaded from by
@@ -337,6 +341,61 @@ is used as MAJOR-MODE-SYMBOL argument."
       (insert "</body>\n</html>\n")
       )
     ))
+
+(defun keyfreq-html-v2 ()
+  "Save an HTML file with all the statistics of each mode."
+  (interactive)
+  (let ((filename (make-temp-file "keyfreq"))
+	(table (copy-hash-table keyfreq-table))
+	(htmltable (lambda (list id)
+		     (insert (concat "<table id=\"" id "\">\n"))
+		     (insert "<thead><tr><th>Times</th><th>Percentage</th><th>Command</th><th>Shortcut</th></tr></thead>\n")
+		     (insert "<tbody>\n")
+		     (keyfreq-format-list list
+					  (lambda (count perc command)
+					    (insert (format "<tr><td>%d</td><td>%.2f%%</td><td>%s</td><td><xmp count=%d>%s</xmp></td></tr>\n" count perc command count (keyfreq-where-is command)))))
+		     (insert "</tbody>\n")
+		     (insert "</table>\n"))))
+
+    ;; Merge with the values in `keyfreq-file'
+    (keyfreq-table-load table)
+
+    (with-temp-file filename
+      (insert "<!DOCTYPE>\n<head><meta charset=\"UTF-8\"></head>\n<html>\n<body>\n")
+      (insert "<h1>Keyfreq Report</h1>\n")
+      (insert "<ul>\n")
+      (insert "<li><a href=\"#all\">All major modes</a></li>\n")
+      (mapc
+       (lambda (major-mode-symbol)
+	 (insert (format "<li><a href=\"#%s\">%s</a></li>\n"
+			 (symbol-name major-mode-symbol)
+			 (symbol-name major-mode-symbol))))
+       (keyfreq-used-major-modes table))
+      (insert "</ul>\n")
+
+      (insert "<h2><a name=\"all\">All major modes</a></h2>\n")
+      (insert "<canvas id=\"canvas-major-modes\" width=\"600\" height=\"250\"></canvas>")
+      (funcall htmltable (keyfreq-list (keyfreq-groups-major-modes table)) "major-modes")
+
+      (mapc
+       (lambda (major-mode-symbol)
+	 (insert (format "<h2><a name=\"%s\">%s</a></h2>\n"
+			 (symbol-name major-mode-symbol)
+			 (symbol-name major-mode-symbol)))
+	 (insert (format "<canvas id=\"canvas-%s\" width=\"600\" height=\"250\"></canvas>\n" (symbol-name major-mode-symbol)))
+	 (funcall htmltable (keyfreq-list (keyfreq-filter-major-mode table major-mode-symbol)) (symbol-name major-mode-symbol)))
+       (keyfreq-used-major-modes table))
+      (insert "<script type=\"text/javascript\">\n")
+      (insert "var modes = [\n")
+      (mapc
+       (lambda (major-mode-symbol)
+	 (insert (format "'%s'," (symbol-name major-mode-symbol))))
+       (keyfreq-used-major-modes table))
+      (insert "];\n")
+      (insert "</script>\n")
+      (insert (format "<script type=\"text/javascript\" src=\"%s\"></script>" (concat keyfreq-folder "script.js")))
+      (insert "</body>\n</html>\n"))
+    (browse-url filename)))
 
 
 (defun keyfreq-json-encode (table)
