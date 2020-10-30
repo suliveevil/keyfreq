@@ -1,7 +1,7 @@
 var skip = [];
 
 let keyboardHeatMapGenerator = {
-    cmap:function(x){ // x between 0 and 1 (percentage)
+    cmap:function(x, opacity){ // x between 0 and 1 (percentage)
 	x = x * 255;
 	r=255 ; g=255 ; b=255;
 	if (x < 64) {
@@ -13,7 +13,7 @@ let keyboardHeatMapGenerator = {
 	} else if (x < 256) {
             r=255 ; g=(256-(x-191)*4) ; b=0;
 	}
-	return "rgb("+r+","+g+","+b+")";
+	return "rgb("+r+","+g+","+b+","+opacity+")";
     },
     compute:function(){
 	var el = document.querySelectorAll(this.id + ' xmp');
@@ -72,9 +72,14 @@ let keyboardHeatMapGenerator = {
 	    for (var iName = 0; iName < key.name.length; iName++) {
 		freq = freq + this.frequency[key.name[iName]];
 	    }
-
-	    this.context.fillStyle = this.cmap((freq - this.min_frequency) / (this.max_frequency - this.min_frequency));
+	    this.context.fillStyle = "#DDDDDD";
 	    this.context.fillRect(key.x * this.u, key.y * this.u, key.width * this.u, key.height * this.u);
+	    this.context.fillStyle = "#FFFFFF";
+	    this.context.fillRect((key.x+0.15) * this.u, (key.y+0.1) * this.u, (key.width-0.3) * this.u, (key.height-0.3) * this.u);
+
+	    this.context.fillStyle = this.cmap((freq - this.min_frequency) / (this.max_frequency - this.min_frequency), 0.4);
+	    this.context.fillRect(key.x * this.u, key.y * this.u, key.width * this.u, key.height * this.u);
+
 	    this.context.strokeRect(key.x * this.u, key.y * this.u, key.width * this.u, key.height * this.u);
 	    this.context.fillStyle = "black";
 	    if (freq == undefined){
@@ -92,7 +97,7 @@ let keyboardHeatMapGenerator = {
 	}
 
 	for (var i = 0; i < 256; i++) {
-	    this.context.fillStyle = this.cmap(1-i/256);
+	    this.context.fillStyle = this.cmap(1-i/256, 1.0);
 	    this.context.fillRect((maxX + 2) * this.u, this.u * i * maxY/256.0, this.u, this.u *(1.1)* maxY/256.0)
 	}
 	this.context.fillStyle = "black";
