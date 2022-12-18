@@ -11,7 +11,7 @@ You can remove a specific key on the map to automatically change the colorscale
 by using the text input at the top of the page with for instance `['C', 'a']` to
 remove `Ctrl` and `a` key from the heat map count.
 
-![Screenshot](https://github.com/KirmTwinty/keyfreq/raw/master/screenshot/keyfreq-html-v2.png
+![Screenshot](./assets/keyfreq-html-v2.png
 "Screenshot of the new rendered page")
 
 You need Javascript to be enabled in your web browser.

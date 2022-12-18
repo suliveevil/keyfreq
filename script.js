@@ -55,7 +55,7 @@ let keyboardHeatMapGenerator = {
 		    this.max_frequency = this.frequency[freqKey];
 		}else if(this.frequency[freqKey]<this.min_frequency){
 		    this.min_frequency = this.frequency[freqKey];
-		}	
+		}
 	    }
 	    
 	    
@@ -83,9 +83,9 @@ let keyboardHeatMapGenerator = {
 	    this.context.strokeRect(key.x * this.u, key.y * this.u, key.width * this.u, key.height * this.u);
 	    this.context.fillStyle = "black";
 	    if (freq == undefined){
-		this.context.fillText(key.name[0], (key.x + 0.25) * this.u, (key.y + 0.5) * this.u); 
+		this.context.fillText(key.name[0], (key.x + 0.25) * this.u, (key.y + 0.5) * this.u);
 	    }else{
-		this.context.fillText(key.name[0], (key.x + 0.25) * this.u, (key.y + 0.5) * this.u); 
+		this.context.fillText(key.name[0], (key.x + 0.25) * this.u, (key.y + 0.5) * this.u);
 	    }
 	    if (key.x + key.width> maxX) {
 		maxX = key.x + key.width;
@@ -117,87 +117,89 @@ let keyboardHeatMapGenerator = {
 	this.u = 30;
 	this.keyboard = [
 	    // Top row
-	    {name:['ESC'], x:0, y:0, width:1, height:1},
-	    {name:['F1'], x:1.25, y:0, width:1, height:1},
-	    {name:['F2'], x:2.25, y:0, width:1, height:1},
-	    {name:['F3'], x:3.25, y:0, width:1, height:1},
-	    {name:['F4'], x:4.25, y:0, width:1, height:1},
-	    {name:['F5'], x:5.5, y:0, width:1, height:1},
-	    {name:['F6'], x:6.5, y:0, width:1, height:1},
-	    {name:['F7'], x:7.5, y:0, width:1, height:1},
-	    {name:['F8'], x:8.5, y:0, width:1, height:1},
-	    {name:['F9'], x:9.75, y:0, width:1, height:1},
-	    {name:['F10'], x:10.75, y:0, width:1, height:1},
-	    {name:['F11'], x:11.75, y:0, width:1, height:1},
-	    {name:['F12'], x:12.75, y:0, width:1, height:1},
+	    {name:['ESC'], x:0, y:0, width:1.04, height:0.75},
+	    {name:['F1'], x:1.04, y:0, width:1.0357, height:0.75},
+	    {name:['F2'], x:2.08, y:0, width:1.0357, height:0.75},
+	    {name:['F3'], x:3.12, y:0, width:1.0357, height:0.75},
+	    {name:['F4'], x:4.16, y:0, width:1.0357, height:0.75},
+	    {name:['F5'], x:5.20, y:0, width:1.0357, height:0.75},
+	    {name:['F6'], x:6.24, y:0, width:1.0357, height:0.75},
+	    {name:['F7'], x:7.28, y:0, width:1.0357, height:0.75},
+	    {name:['F8'], x:8.32, y:0, width:1.0357, height:0.75},
+	    {name:['F9'], x:9.36, y:0, width:1.0357, height:0.75},
+	    {name:['F10'], x:10.40, y:0, width:1.0357, height:0.75},
+	    {name:['F11'], x:11.44, y:0, width:1.0357, height:0.75},
+	    {name:['F12'], x:12.48, y:0, width:1.0357, height:0.75},
+	    {name:['⏏︎'], x:13.52, y:0, width:1, height:0.75},
 	    // First row
-	    {name:['œ', 'Œ'], x:0, y:1.25, width:1, height:1},
-	    {name:['&', '1'], x:1, y:1.25, width:1, height:1},
-	    {name:['é', '2'], x:2, y:1.25, width:1, height:1},
-	    {name:['"', '3'], x:3, y:1.25, width:1, height:1},
-	    {name:['\'', '4'], x:4, y:1.25, width:1, height:1},
-	    {name:['(', '5'], x:5, y:1.25, width:1, height:1},
-	    {name:['-', '6'], x:6, y:1.25, width:1, height:1},
-	    {name:['è', '7'], x:7, y:1.25, width:1, height:1},
-	    {name:['_', '8'], x:8, y:1.25, width:1, height:1},
-	    {name:['ç', '9'], x:9, y:1.25, width:1, height:1},
-	    {name:['à', '10'], x:10, y:1.25, width:1, height:1},
-	    {name:[')', '11'], x:11, y:1.25, width:1, height:1},
-	    {name:['=', '12'], x:12, y:1.25, width:1, height:1},
-	    {name:['backspace'], x:13, y:1.25, width:2, height:1},
+	    {name:['~', '`'], x:0, y:1.25, width:1, height:1},
+	    {name:['!', '1'], x:1, y:1.25, width:1, height:1},
+	    {name:['@', '2'], x:2, y:1.25, width:1, height:1},
+	    {name:['#', '3'], x:3, y:1.25, width:1, height:1},
+	    {name:['$', '4'], x:4, y:1.25, width:1, height:1},
+	    {name:['%', '5'], x:5, y:1.25, width:1, height:1},
+	    {name:['^', '6'], x:6, y:1.25, width:1, height:1},
+	    {name:['&', '7'], x:7, y:1.25, width:1, height:1},
+	    {name:['*', '8'], x:8, y:1.25, width:1, height:1},
+	    {name:['(', '9'], x:9, y:1.25, width:1, height:1},
+	    {name:[')', '0'], x:10, y:1.25, width:1, height:1},
+	    {name:['_', '-'], x:11, y:1.25, width:1, height:1},
+	    {name:['+', '='], x:12, y:1.25, width:1, height:1},
+	    {name:['backspace'], x:13, y:1.25, width:1.5, height:1},
 	    // Second row
-	    {name:['TAB'], x:0, y:2.25, width:1.25, height:1},
-	    {name:['a'], x:1.25, y:2.25, width:1, height:1},
-	    {name:['z'], x:2.25, y:2.25, width:1, height:1},
-	    {name:['e'], x:3.25, y:2.25, width:1, height:1},
-	    {name:['r'], x:4.25, y:2.25, width:1, height:1},
-	    {name:['t'], x:5.25, y:2.25, width:1, height:1},
-	    {name:['y'], x:6.25, y:2.25, width:1, height:1},
-	    {name:['u'], x:7.25, y:2.25, width:1, height:1},
-	    {name:['i'], x:8.25, y:2.25, width:1, height:1},
-	    {name:['o'], x:9.25, y:2.25, width:1, height:1},
-	    {name:['p'], x:10.25, y:2.25, width:1, height:1},
-	    {name:['^'], x:11.25, y:2.25, width:1, height:1},
-	    {name:['$'], x:12.25, y:2.25, width:1, height:1},
-	    {name:['ENTER'], x:13.25, y:2.25, width:1.75, height:1},
+	    {name:['TAB'], x:0, y:2.25, width:1.5, height:1},
+	    {name:['q'], x:1.5, y:2.25, width:1, height:1},
+	    {name:['w'], x:2.5, y:2.25, width:1, height:1},
+	    {name:['e'], x:3.5, y:2.25, width:1, height:1},
+	    {name:['r'], x:4.5, y:2.25, width:1, height:1},
+	    {name:['t'], x:5.5, y:2.25, width:1, height:1},
+	    {name:['y'], x:6.5, y:2.25, width:1, height:1},
+	    {name:['u'], x:7.5, y:2.25, width:1, height:1},
+	    {name:['i'], x:8.5, y:2.25, width:1, height:1},
+	    {name:['o'], x:9.5, y:2.25, width:1, height:1},
+	    {name:['p'], x:10.5, y:2.25, width:1, height:1},
+	    {name:['{', '['], x:11.5, y:2.25, width:1, height:1},
+	    {name:['}', ']'], x:12.5, y:2.25, width:1, height:1},
+	    {name:['|', '\\'], x:13.5, y:2.25, width:1, height:1},
 	    // Third row
-	    {name:['CAPSLOCK'], x:0, y:3.25, width:1.5, height:1},
-	    {name:['q'], x:1.5, y:3.25, width:1, height:1},
-	    {name:['s'], x:2.5, y:3.25, width:1, height:1},
-	    {name:['d'], x:3.5, y:3.25, width:1, height:1},
-	    {name:['f'], x:4.5, y:3.25, width:1, height:1},
-	    {name:['g'], x:5.5, y:3.25, width:1, height:1},
-	    {name:['h'], x:6.5, y:3.25, width:1, height:1},
-	    {name:['j'], x:7.5, y:3.25, width:1, height:1},
-	    {name:['k'], x:8.5, y:3.25, width:1, height:1},
-	    {name:['l'], x:9.5, y:3.25, width:1, height:1},
-	    {name:['m'], x:10.5, y:3.25, width:1, height:1},
-	    {name:['ù'], x:11.5, y:3.25, width:1, height:1},
-	    {name:['*'], x:12.5, y:3.25, width:1, height:1},
-	    {name:['ENTER'], x:13.5, y:3.25, width:1.5, height:1},
+	    {name:['CAPSLOCK'], x:0, y:3.25, width:1.75, height:1},
+	    {name:['a'], x:1.75, y:3.25, width:1, height:1},
+	    {name:['s'], x:2.75, y:3.25, width:1, height:1},
+	    {name:['d'], x:3.75, y:3.25, width:1, height:1},
+	    {name:['f'], x:4.75, y:3.25, width:1, height:1},
+	    {name:['g'], x:5.75, y:3.25, width:1, height:1},
+	    {name:['h'], x:6.75, y:3.25, width:1, height:1},
+	    {name:['j'], x:7.75, y:3.25, width:1, height:1},
+	    {name:['k'], x:8.75, y:3.25, width:1, height:1},
+	    {name:['l'], x:9.75, y:3.25, width:1, height:1},
+	    {name:[':', ';'], x:10.75, y:3.25, width:1, height:1},
+	    {name:['"', '\''], x:11.75, y:3.25, width:1, height:1},
+	    {name:['RET'], x:12.75, y:3.25, width:1.75, height:1},
 	    // Fourth row
-	    {name:['S'], x:0, y:4.25, width:1.25, height:1},
-	    {name:['<'], x:1.25, y:4.25, width:1, height:1},
-	    {name:['w'], x:2.25, y:4.25, width:1, height:1},
+	    {name:['S'], x:0, y:4.25, width:2.25, height:1},
+	    {name:['z'], x:2.25, y:4.25, width:1, height:1},
 	    {name:['x'], x:3.25, y:4.25, width:1, height:1},
 	    {name:['c'], x:4.25, y:4.25, width:1, height:1},
 	    {name:['v'], x:5.25, y:4.25, width:1, height:1},
 	    {name:['b'], x:6.25, y:4.25, width:1, height:1},
 	    {name:['n'], x:7.25, y:4.25, width:1, height:1},
-	    {name:[','], x:8.25, y:4.25, width:1, height:1},
-	    {name:[';'], x:9.25, y:4.25, width:1, height:1},
-	    {name:[':'], x:10.25, y:4.25, width:1, height:1},
-	    {name:['!'], x:11.25, y:4.25, width:1, height:1},
-	    {name:['RSHIFT'], x:12.25, y:4.25, width:2.75, height:1},
+	    {name:['m'], x:8.25, y:4.25, width:1, height:1},
+	    {name:['<', ','], x:9.25, y:4.25, width:1, height:1},
+	    {name:['>', '.'], x:10.25, y:4.25, width:1, height:1},
+	    {name:['?', '/'], x:11.25, y:4.25, width:1, height:1},
+	    {name:['RSHIFT'], x:12.25, y:4.25, width:2.25, height:1},
 	    // Fifth row
-	    {name:['C'], x:0, y:5.25, width:1.25, height:1},
-	    {name:['LWIN'], x:1.25, y:5.25, width:1.25, height:1.5},
-	    {name:['M'], x:2.5, y:5.25, width:1.25, height:1.5},
-	    {name:['SPC'], x:3.75, y:5.25, width:6, height:1.5},
-	    {name:['ALTGR'], x:9.75, y:5.25, width:1.25, height:1.5},
-	    {name:['RWIN'], x:11, y:5.25, width:1.25, height:1.5},
-	    {name:['menu'], x:12.25, y:5.25, width:1.25, height:1.5},
-	    {name:['RCTRL'], x:13.5, y:5.25, width:1.5, height:1}
+	    {name:['G'], x:0, y:5.25, width:1, height:1},
+	    {name:['C'],   x:1, y:5.25, width:1, height:1},
+	    {name:['M'],    x:2, y:5.25, width:1, height:1},
+	    {name:['CMD'],    x:3, y:5.25, width:1.25, height:1},
+	    {name:['SPC'],    x:4.25, y:5.25, width:5, height:1},
+	    {name:['R_CMD'],  x:9.25, y:5.25, width:1.25, height:1},
+	    {name:['R_OPT'],  x:10.5, y:5.25, width:1, height:1},
+	    {name:['left'], x:11.5, y:5.75, width:1, height:0.5},
+	    {name:['up'], x:12.5, y:5.25, width:1, height:0.5},
+	    {name:['down'], x:12.5, y:5.75, width:1, height:0.5},
+	    {name:['right'], x:13.5, y:5.75, width:1, height:0.5},
 	];
     }
     
@@ -234,9 +236,9 @@ var update_skip = function(){
     };
     
     document.body.innerHTML +='<div class="skipEl">' +
-	'<label for="skipkeys"> Skip keys: </label>' + 
+	'<label for="skipkeys"> Skip keys: </label>' +
 	'<input name="skipkeys" type="text" placeholder="Skip keys (e.g. [\'C\', \'S\', \'M\'])" id="skipkeys">' +
-	'<button onclick="update_skip()">OK</button>' + 
+	'<button onclick="update_skip()">OK</button>' +
 	'</div>';
     generate_drawings();
 
