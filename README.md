@@ -82,6 +82,40 @@ Use `keyfreq-show` to see how many times you used a command.
 Use `keyfreq-html` to get the original rendered HTML page.
 Use `keyfreq-html-v2` to get the keyboard heat map.
 
+## Saving behaviour
+
+`keyfreq` keeps its statistics in `keyfreq-file` (by default `~/.emacs.keyfreq`),
+one `((major-mode . command) . count)` entry per line.
+
+Saving used to regenerate the whole file from the in-memory hash table.  That made
+version control useless: the writer emitted the entries in reverse order, so every
+save rewrote every line -- a 5000-entry log changed by about 10000 lines per save,
+regardless of how little you actually used Emacs.
+
+A save now patches the file in place:
+
+* an entry that already exists keeps its line and only its counter is rewritten;
+* a command that is not in the file yet is appended as a new line, in sorted
+  order, right before the closing parenthesis;
+* every other byte is left untouched, so `git diff` shows only what really changed.
+
+| Setting / command | Default | Meaning |
+| --- | --- | --- |
+| `keyfreq-incremental-save` | `t` | Bind to `nil` to regenerate the whole file (the old behaviour). |
+| `keyfreq-coding-system` | `nil` | Coding system for the file.  `nil` detects it, so an existing file keeps its own encoding. |
+| `M-x keyfreq-sort-file` | -- | One-off normalisation: sort the file by key for perfectly stable, line-aligned diffs. |
+
+The writer is also safer than before: it writes through a temporary file and renames
+it into place, it never drops the in-memory deltas unless the data reached the disk,
+and a truncated or damaged file is copied to `keyfreq-file.corrupt-<timestamp>`
+before the readable entries are salvaged, instead of silently wiping the history.
+
+### Running the tests
+
+``` sh
+emacs --batch -l test/keyfreq-tests.el
+```
+
 ## How to exclude commands
 
 ``` elisp
