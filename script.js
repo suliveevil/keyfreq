@@ -368,12 +368,98 @@
         return { max: max, total: total };
     }
 
-    /* ---------- wiring ---------- */
+    /* ---------- data tables ---------- */
 
-    function sections() {
-        return Array.prototype.slice.call(
+    var catalog = Object.create(null);   /* mode -> {command: shortcut text} */
+    var counts = Object.create(null);    /* mode -> {command: count} */
+    var history = null;
+
+    function readTables() {
+        var all = Array.prototype.slice.call(
             document.querySelectorAll("section[data-mode]"));
+        all.forEach(function (section) {
+            var id = section.getAttribute("data-mode");
+            var bag = Object.create(null);
+            var texts = Object.create(null);
+            var rows = section.querySelectorAll("tbody tr");
+            for (var i = 0; i < rows.length; i++) {
+                var cells = rows[i].children;
+                if (cells.length < 4) continue;
+                var command = cells[2].textContent.trim();
+                bag[command] = parseInt(cells[0].textContent.replace(/[^0-9]/g, ""), 10) || 0;
+                texts[command] = cells[3].textContent;
+            }
+            counts[id] = bag;
+            catalog[id] = texts;
+        });
+        return all;
     }
+
+    function bagFrom(pairs, resolve) {
+        var bag = Object.create(null);
+        for (var i = 0; i < pairs.length; i++) {
+            var command = pairs[i][0];
+            var n = pairs[i][1];
+            var modeId = pairs[i][2];
+            if (!n) continue;
+            var text = resolve(command, modeId);
+            if (!text) continue;
+            var binding = firstBinding(text);
+            if (!binding) continue;
+            var keys = shortcutKeys(binding);
+            var seen = Object.create(null);
+            for (var k = 0; k < keys.length; k++) {
+                var key = keys[k];
+                if (seen[key] || !mapsToKey(key)) continue;
+                seen[key] = true;
+                bag[key] = (bag[key] || 0) + n;
+            }
+        }
+        return bag;
+    }
+
+    function bagFor(modeId, period) {
+        if (period === "now") {
+            var c = counts[modeId] || {};
+            var t = catalog[modeId] || {};
+            var pairs = Object.keys(c).map(function (command) {
+                return [command, c[command], modeId];
+            });
+            return bagFrom(pairs, function (command) { return t[command]; });
+        }
+        if (!history) return Object.create(null);
+        var p = history.periodIndex[period];
+        if (p === undefined) return Object.create(null);
+        var rows = history.rows;
+        var names = history.names;
+        var out = [];
+        for (var i = 0; i < rows.length; i++) {
+            var row = rows[i];
+            if (row[0] !== p) continue;
+            var modeName = names[row[1]];
+            if (modeId !== "all" && modeName !== modeId) continue;
+            out.push([names[row[2]], row[3], modeName]);
+        }
+        return bagFrom(out, function (command, m) {
+            return (catalog[m] || {})[command];
+        });
+    }
+
+    function loadHistory() {
+        var node = document.getElementById("keyfreq-data");
+        if (!node) return null;
+        try {
+            var data = JSON.parse(node.textContent);
+            var index = Object.create(null);
+            data.periods.forEach(function (period, i) { index[period] = i; });
+            data.periodIndex = index;
+            return data;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    /* ---------- wiring ---------- */
 
     function boot() {
         var canvas = document.getElementById("heatmap");
@@ -381,21 +467,18 @@
         if (!canvas || !modeSelect) return;
 
         var scaleSelect = document.getElementById("scale-select");
+        var periodSelect = document.getElementById("period-select");
         var summary = document.getElementById("scope-summary");
         var emptyNote = document.getElementById("empty-note");
         var tip = document.getElementById("key-tip");
-        var wrap = canvas.parentNode;
-        var all = sections();
-        var byMode = Object.create(null);
-        all.forEach(function (section) {
-            byMode[section.getAttribute("data-mode")] = section;
-        });
+
+        readTables();
+        history = loadHistory();
 
         function render() {
             var mode = modeSelect.value;
-            var section = byMode[mode] || byMode.all;
-            var items = readTable(section);
-            var bag = keyBag(items, []);
+            var period = periodSelect ? periodSelect.value : "now";
+            var bag = bagFor(mode, period);
             var stats = draw(canvas, bag, scaleSelect ? scaleSelect.value : "sqrt");
 
             canvas.hidden = stats.max === 0;
@@ -407,21 +490,19 @@
             }
             if (summary) {
                 summary.textContent = (mode === "all" ? "all modes" : mode) +
+                    (period === "now" ? "" : " \u00b7 " + period) +
                     " \u00b7 " + stats.total.toLocaleString() + " presses";
             }
             tip.hidden = true;
         }
 
-        /* hover detail */
         canvas.addEventListener("mousemove", function (event) {
             var rect = canvas.getBoundingClientRect();
             var dpr = window.devicePixelRatio || 1;
-            /* the canvas may be scaled down by CSS max-width */
             var sx = canvas.width / dpr / rect.width;
             var sy = canvas.height / dpr / rect.height;
             var x = (event.clientX - rect.left) * sx;
             var y = (event.clientY - rect.top) * sy;
-
             var hit = null;
             for (var i = 0; i < keyBoxes.length; i++) {
                 var b = keyBoxes[i];
@@ -446,6 +527,7 @@
 
         modeSelect.addEventListener("change", render);
         if (scaleSelect) scaleSelect.addEventListener("change", render);
+        if (periodSelect) periodSelect.addEventListener("change", render);
         render();
     }
 

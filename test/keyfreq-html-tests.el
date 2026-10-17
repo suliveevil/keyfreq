@@ -175,6 +175,21 @@
                      (not (string-match-p "<canvas></canvas>" html))))
            (delete-file log) (delete-file out)))
 
+(kfh-test "no git history means no period menu and no data blob"
+         (let* ((log (kfh-fixture '(((org-mode . next-line) . 3))))
+                (keyfreq-file log)
+                (out (expand-file-name "nohist.html" kfh-tmp)))
+           (let ((keyfreq-html-history nil))
+             (keyfreq-html-v2 out nil))
+           (let ((html (kfh-slurp out)))
+             (kfh-ok "no history script is embedded"
+                     (not (string-match-p "id=\"keyfreq-data\"" html)))
+             (kfh-ok "no period menu"
+                     (not (string-match-p "id=\"period-select\"" html)))
+             (kfh-ok "the mode menu is still there"
+                     (string-match-p "id=\"mode-select\"" html)))
+           (delete-file log) (delete-file out)))
+
 (kfh-test "mode names are escaped everywhere they appear"
          (let* ((weird (intern (concat "weird<mode>&" "\"" "name")))
                 (log (kfh-fixture (list (cons (cons weird 'next-line) 11))))

@@ -331,6 +331,162 @@ is used as MAJOR-MODE-SYMBOL argument."
       )))
 
 
+(defcustom keyfreq-html-history t
+  "When non-nil, `keyfreq-html-v2' reads the git history of
+`keyfreq-file' and lets the report pick a time period.
+
+The log is a plain file in a git repository for most people, and the
+commit dates are the only time information keyfreq has: the counters
+are cumulative, so a snapshot taken from an old commit shows what the
+heat map looked like back then."
+  :group 'keyfreq
+  :type 'boolean)
+
+(defun keyfreq--git (repo &rest args)
+  "Run git in REPO with ARGS and return its stdout, or nil on failure."
+  (when (and repo (executable-find "git"))
+    (with-temp-buffer
+      (let ((status (apply #'call-process "git" nil (current-buffer) nil
+                           (append (list "-C" repo) args))))
+        (when (eq status 0)
+          (buffer-string))))))
+
+(defun keyfreq--git-repo (file)
+  "Return (REPO . RELATIVE-PATH) for FILE when it lives in a git work tree."
+  (let* ((target (expand-file-name file))
+         (dir (file-name-directory target))
+         (top (ignore-errors
+                (string-trim
+                 (or (keyfreq--git dir "rev-parse" "--show-toplevel") "")))))
+    (when (and (not (string-empty-p top)) (file-directory-p top))
+      (cons top (file-relative-name target top)))))
+
+(defun keyfreq--read-log-entries (text)
+  "Parse TEXT as a keyfreq log and return a hash of (MODE . COMMAND) -> count."
+  (let ((table (make-hash-table :test 'equal)))
+    (ignore-errors
+      (with-temp-buffer
+        (insert text)
+        (goto-char (point-min))
+        (let ((form (read (current-buffer))))
+          (dolist (entry form)
+            (when (and (consp entry) (consp (car entry)) (integerp (cdr entry)))
+              (puthash (car entry) (+ (gethash (car entry) table 0) (cdr entry))
+                       table))))))
+    table))
+
+(defun keyfreq--git-versions (file)
+  "Return (DATE . TEXT) pairs for each commit of FILE, oldest first."
+  (let* ((repo (keyfreq--git-repo file))
+         (repo-dir (car-safe repo))
+         (relative (cdr-safe repo)))
+    (when repo-dir
+      (let ((log (keyfreq--git repo-dir "log" "--format=%h%x09%ad"
+                               "--date=short" "--follow" "--" relative))
+            (versions nil))
+        (when log
+          (dolist (line (nreverse (split-string log "\n" t)))
+            (let ((fields (split-string line "\t")))
+              (when (and (car fields) (cadr fields))
+                (let ((text (keyfreq--git repo-dir "show"
+                                          (concat (car fields) ":" relative))))
+                  (when text
+                    (push (cons (cadr fields) text) versions)))))))
+        (nreverse versions)))))
+
+(defun keyfreq--read-file-entries (file)
+  "Parse FILE as a keyfreq log."
+  (when (file-exists-p file)
+    (keyfreq--read-log-entries
+     (with-temp-buffer
+       (let ((coding-system-for-read
+              (or keyfreq-coding-system 'undecided)))
+         (insert-file-contents file))
+       (buffer-string)))))
+
+(defun keyfreq--history-snapshots (file)
+  "Return (PERIOD . TABLE) pairs for FILE, one per month plus now.
+
+The counters are cumulative, and the log was rewritten a few times over
+the years (a machine or Emacs change resets some counters), so the
+useful question is not what changed between two commits but what the
+whole picture looked like at a given moment.  Snapshots are monotonic
+by construction and cannot produce negative counts."
+  (let ((versions (and keyfreq-html-history (keyfreq--git-versions file)))
+        (latest (make-hash-table :test 'equal))
+        (months nil))
+    (dolist (version versions)
+      (let ((month (substring (car version) 0 (min 7 (length (car version))))))
+        (unless (gethash month latest)
+          (push month months))
+        (puthash month (cdr version) latest)))
+    (let ((result nil))
+      (dolist (month (nreverse months))
+        (push (cons month (keyfreq--read-log-entries (gethash month latest)))
+              result))
+      (when (file-exists-p file)
+        (push (cons "now" (keyfreq--read-file-entries file)) result))
+      (nreverse result))))
+
+(defun keyfreq--history-payload (snapshots)
+  "Return (PERIODS NAMES ROWS) describing SNAPSHOTS.
+
+ROWS is a list of (PERIOD-INDEX MODE-INDEX COMMAND-INDEX COUNT), where
+the indexes point into NAMES."
+  (let ((periods nil)
+        (names nil)
+        (index (make-hash-table :test 'equal))
+        (rows nil)
+        (period 0))
+    (dolist (snapshot snapshots)
+      (push (car snapshot) periods)
+      (maphash
+       (lambda (key count)
+         (when (and (consp key) (symbolp (cdr key)) (> count 0))
+           (let ((mode-name (symbol-name (car key)))
+                 (command-name (symbol-name (cdr key))))
+             (dolist (name (list mode-name command-name))
+               (unless (gethash name index)
+                 (setq names (append names (list name)))
+                 (puthash name (1- (length names)) index)))
+             (push (list period
+                         (gethash mode-name index)
+                         (gethash command-name index)
+                         count)
+                   rows))))
+       (cdr snapshot))
+      (setq period (1+ period)))
+    (list (nreverse periods) names (nreverse rows))))
+
+(defun keyfreq--json-history (periods names rows)
+  "Return `keyfreq--json-history-1' with HTML-significant characters escaped."
+  (let ((json (keyfreq--json-history-1 periods names rows)))
+    (setq json (replace-regexp-in-string "<" "\\u003c" json t t))
+    (setq json (replace-regexp-in-string ">" "\\u003e" json t t))
+    (setq json (replace-regexp-in-string "&" "\\u0026" json t t))
+    json))
+
+(defun keyfreq--json-quoted (string)
+  "Return STRING as a JSON string literal."
+  (require (quote json))
+  (json-encode-string string))
+
+(defun keyfreq--json-history-1 (periods names rows)
+  "Serialise the history as a JSON object.
+
+Angle brackets and ampersands are escaped as \\u escapes so that the
+payload can be embedded in a script element safely."
+  (concat
+   "{\"periods\":["
+   (mapconcat #'keyfreq--json-quoted periods ",")
+   "],\"names\":["
+   (mapconcat #'keyfreq--json-quoted names ",")
+   "],\"rows\":["
+   (mapconcat (lambda (row)
+                (concat "[" (mapconcat #'number-to-string row ",") "]"))
+              rows ",")
+   "]}"))
+
 ;;; ------------------------------------------------------------------
 ;;; HTML report
 ;;; ------------------------------------------------------------------
@@ -516,11 +672,12 @@ keystroke description."
                      count (funcall shortcut command)))))
   (insert "</tbody>\n</table>\n"))
 
-(defun keyfreq--html-insert-card (modes table)
+(defun keyfreq--html-insert-card (modes periods)
   "Insert the interactive heat map card.
 
-MODES is the value of `keyfreq--html-modes' for TABLE.  The card holds
-a single canvas plus the controls that choose what it shows."
+MODES is the value of `keyfreq--html-modes'; PERIODS is the list of
+history periods, or nil when there is no git history.  The card holds a
+single canvas plus the controls that choose what it shows."
   (insert "<section class=\"card\" id=\"heatmap-card\">\n")
   (insert "<div class=\"card-head\">\n")
   (insert "<h2>Keyboard heat map</h2>\n")
@@ -538,6 +695,15 @@ a single canvas plus the controls that choose what it shows."
           "<option value=\"linear\">linear</option>"
           "<option value=\"log\">log</option>"
           "</select></label>\n")
+  (when (> (length (delete "now" (copy-sequence periods))) 0)
+    (insert "<label>Period <select id=\"period-select\">")
+    (insert "<option value=\"now\" selected>now</option>")
+    (dolist (period periods)
+      (unless (equal period "now")
+        (insert (format "<option value=\"%s\">%s</option>"
+                        (keyfreq--html-escape period)
+                        (keyfreq--html-escape period)))))
+    (insert "</select></label>\n"))
   (insert "<span class=\"scope\" id=\"scope-summary\"></span>\n")
   (insert "</div>\n</div>\n")
   (insert "<div class=\"heatmap-wrap\">\n")
@@ -592,6 +758,8 @@ Interactively, use a prefix argument to choose FILENAME."
            (index (keyfreq--html-shortcut-index table modes))
            (per-mode (car index))
            (all-keys (cdr index))
+           (snapshots (keyfreq--history-snapshots keyfreq-file))
+           (payload (keyfreq--history-payload snapshots))
            (file (or filename
                      (make-temp-file
                       (expand-file-name "keyfreq-" temporary-file-directory)
@@ -632,7 +800,7 @@ Interactively, use a prefix argument to choose FILENAME."
                           (length modes)
                           (keyfreq--html-number total)
                           (format-time-string "%Y-%m-%d %H:%M")))
-          (keyfreq--html-insert-card modes table)
+          (keyfreq--html-insert-card modes (car payload))
           (insert "<section data-mode=\"all\">\n")
           (insert "<h2 id=\"anchor-all\">All major modes</h2>\n")
           (insert (funcall cell
@@ -652,9 +820,16 @@ Interactively, use a prefix argument to choose FILENAME."
                                (lambda (command)
                                  (or (gethash command keys) ""))))
               (insert "</section>\n")))
-          (insert "</main>\n<script>\n")
+          (insert "</main>\n")
+          (when (> (length (car payload)) 1)
+            ;; escape < > & so the payload can never close the script tag
+            (insert "<script type=\"application/json\" id=\"keyfreq-data\">")
+            (insert (keyfreq--json-history (car payload) (nth 1 payload) (nth 2 payload)))
+            (insert "</script>\n"))
+          (insert "</body>\n</html>\n")
+          (insert "<script>\n")
           (keyfreq--html-insert-asset "script.js")
-          (insert "\n</script>\n</body>\n</html>\n")))
+          (insert "\n</script>\n")))
       ;; drop the previous temporary report so the temp dir does not fill up
       (when (and (null filename)
                  keyfreq-html--last-temp-report
