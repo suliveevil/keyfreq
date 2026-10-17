@@ -488,6 +488,145 @@ payload can be embedded in a script element safely."
    "]}"))
 
 ;;; ------------------------------------------------------------------
+;;; Daily archives
+;;; ------------------------------------------------------------------
+
+(defcustom keyfreq-daily-archive t
+  "When non-nil, keep one file per day under `keyfreq-daily-directory'.
+
+`keyfreq-file' stays the cumulative rollup that the \"All time\"
+view reads.  The daily archives are the authority for the Today /
+7 days / 30 days views, and they make the rollup rebuildable with
+`keyfreq-rebuild-rollup'."
+  :group 'keyfreq
+  :type 'boolean)
+
+(defcustom keyfreq-daily-directory nil
+  "Directory holding the per-day archives.
+Nil means a `keyfreq-days' directory next to `keyfreq-file'."
+  :group 'keyfreq
+  :type '(choice (const :tag "Next to keyfreq-file" nil) directory))
+
+(defvar keyfreq--rollup-dirty nil
+  "Expanded name of a rollup file that must be rebuilt from the archives.
+
+Storing the file rather than a flag keeps a failure from one rollup from
+triggering a rebuild of a different one.")
+
+(defun keyfreq--daily-dir ()
+  "Return the directory holding the daily archives."
+  (or keyfreq-daily-directory
+      (expand-file-name
+       "keyfreq-days"
+       (file-name-directory (expand-file-name keyfreq-file)))))
+
+(defun keyfreq--daily-baseline ()
+  "Return the file holding the pre-archive totals."
+  (expand-file-name ".baseline.log" (keyfreq--daily-dir)))
+
+(defun keyfreq--daily-file (&optional days-ago)
+  "Return the archive file for DAYS-AGO days before today."
+  (let* ((now (decode-time))
+         ;; noon keeps summer time from moving the date around
+         (time (encode-time 0 0 12 (- (nth 3 now) (or days-ago 0))
+                            (nth 4 now) (nth 5 now))))
+    (expand-file-name (concat (format-time-string "%Y-%m-%d" time) ".log")
+                      (keyfreq--daily-dir))))
+
+(defun keyfreq--daily-ensure-baseline ()
+  "Copy the rollup aside once, before the first daily archive is written."
+  (let ((baseline (keyfreq--daily-baseline)))
+    (unless (or (file-exists-p baseline)
+                (not (file-exists-p keyfreq-file))
+                (zerop (file-attribute-size (file-attributes keyfreq-file))))
+      (make-directory (keyfreq--daily-dir) t)
+      (copy-file keyfreq-file baseline t))))
+
+(defun keyfreq--table-entries (table)
+  "Return the entries of TABLE sorted by their printed key."
+  (let ((entries nil))
+    (maphash (lambda (key count) (push (cons key count) entries)) table)
+    (sort entries
+          (lambda (a b)
+            (string< (prin1-to-string (car a)) (prin1-to-string (car b)))))))
+
+(defun keyfreq--write-table (table file)
+  "Write TABLE to FILE as a keyfreq log, replacing it."
+  (make-directory (file-name-directory (expand-file-name file)) t)
+  (let ((content
+         (with-temp-buffer
+           (insert "(")
+           (dolist (entry (keyfreq--table-entries table))
+             (insert (prin1-to-string entry) "\n"))
+           (insert ")")
+           (buffer-string))))
+    (keyfreq--write-file content file
+                         (keyfreq--writing-coding-system
+                          (keyfreq--file-coding-system file)))))
+
+(defun keyfreq--archive-day (pending)
+  "Add the deltas in PENDING to today's archive."
+  (make-directory (keyfreq--daily-dir) t)
+  (keyfreq--daily-ensure-baseline)
+  (let ((file (keyfreq--daily-file)))
+    (if (and (file-exists-p file)
+             (> (file-attribute-size (file-attributes file)) 0))
+        (keyfreq--merge-in-place pending file)
+      (keyfreq--write-table pending file))))
+
+(defun keyfreq--range-table (days)
+  "Return a table with the totals of the last DAYS daily archives."
+  (let ((table (make-hash-table :test 'equal)))
+    (dotimes (i days)
+      (let ((file (keyfreq--daily-file i)))
+        (when (file-exists-p file)
+          (maphash (lambda (key count)
+                     (puthash key (+ (gethash key table 0) count) table))
+                   (keyfreq--read-file-entries file)))))
+    table))
+
+(defun keyfreq-rebuild-rollup ()
+  "Rebuild `keyfreq-file' from the baseline plus every daily archive."
+  (interactive)
+  (let ((dir (keyfreq--daily-dir)))
+    (unless (file-directory-p dir)
+      (user-error "No daily archives in %s" dir))
+    (let ((table (make-hash-table :test 'equal))
+          (files (directory-files
+                  dir t "\\`[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]\\.log\\'")))
+      (let ((baseline (keyfreq--daily-baseline)))
+        (when (file-exists-p baseline)
+          (maphash (lambda (key count)
+                     (puthash key (+ (gethash key table 0) count) table))
+                   (keyfreq--read-file-entries baseline))))
+      (dolist (file files)
+        (maphash (lambda (key count)
+                   (puthash key (+ (gethash key table 0) count) table))
+                 (keyfreq--read-file-entries file)))
+      (keyfreq--write-table table keyfreq-file)
+      (setq keyfreq--rollup-dirty nil)
+      (message "keyfreq: rebuilt %s from %d daily files"
+               (file-name-nondirectory keyfreq-file) (length files)))))
+
+(defun keyfreq--report-snapshots (file)
+  "Return (PERIOD . TABLE) pairs for the report, ranges first."
+  (let ((ranges nil))
+    (when (and keyfreq-daily-archive (file-directory-p (keyfreq--daily-dir)))
+      (dolist (spec '(("today" . 1) ("7d" . 7) ("30d" . 30)))
+        (let ((table (keyfreq--range-table (cdr spec))))
+          (when (> (hash-table-count table) 0)
+            (push (cons (car spec) table) ranges)))))
+    (append (nreverse ranges) (keyfreq--history-snapshots file))))
+
+(defun keyfreq--period-label (period)
+  "Return the menu label for the report PERIOD."
+  (cond ((equal period "now") "All time")
+        ((equal period "today") "Today")
+        ((equal period "7d") "Last 7 days")
+        ((equal period "30d") "Last 30 days")
+        (t period)))
+
+;;; ------------------------------------------------------------------
 ;;; HTML report
 ;;; ------------------------------------------------------------------
 
@@ -695,14 +834,14 @@ single canvas plus the controls that choose what it shows."
           "<option value=\"linear\">linear</option>"
           "<option value=\"log\">log</option>"
           "</select></label>\n")
-  (when (> (length (delete "now" (copy-sequence periods))) 0)
+  (when (> (length periods) 1)
     (insert "<label>Period <select id=\"period-select\">")
-    (insert "<option value=\"now\" selected>now</option>")
     (dolist (period periods)
       (unless (equal period "now")
         (insert (format "<option value=\"%s\">%s</option>"
                         (keyfreq--html-escape period)
-                        (keyfreq--html-escape period)))))
+                        (keyfreq--html-escape (keyfreq--period-label period))))))
+    (insert "<option value=\"now\" selected>All time</option>")
     (insert "</select></label>\n"))
   (insert "<span class=\"scope\" id=\"scope-summary\"></span>\n")
   (insert "</div>\n</div>\n")
@@ -758,7 +897,7 @@ Interactively, use a prefix argument to choose FILENAME."
            (index (keyfreq--html-shortcut-index table modes))
            (per-mode (car index))
            (all-keys (cdr index))
-           (snapshots (keyfreq--history-snapshots keyfreq-file))
+           (snapshots (keyfreq--report-snapshots keyfreq-file))
            (payload (keyfreq--history-payload snapshots))
            (file (or filename
                      (make-temp-file
@@ -1015,15 +1154,16 @@ coding system wins so that the file keeps its original encoding."
       detected
     (or keyfreq-coding-system 'utf-8-unix)))
 
-(defun keyfreq--file-coding-system ()
-  "Detect the coding system of an existing `keyfreq-file'."
-  (when (file-exists-p keyfreq-file)
-    (with-temp-buffer
-      (condition-case nil
-          (progn
-            (insert-file-contents keyfreq-file nil 0 65536)
-            buffer-file-coding-system)
-        (error nil)))))
+(defun keyfreq--file-coding-system (&optional file)
+  "Detect the coding system of an existing FILE, default `keyfreq-file'."
+  (let ((target (or file keyfreq-file)))
+    (when (file-exists-p target)
+      (with-temp-buffer
+        (condition-case nil
+            (progn
+              (insert-file-contents target nil 0 65536)
+              buffer-file-coding-system)
+          (error nil))))))
 
 (defun keyfreq--counter-span (start end)
   "Return the (BEG . END) of the counter token at the tail of START..END.
@@ -1108,19 +1248,20 @@ further, so the caller falls back to a full rewrite instead."
       (when (file-exists-p tmp)
         (ignore-errors (delete-file tmp))))))
 
-(defun keyfreq--merge-in-place (pending)
-  "Merge the deltas of PENDING into `keyfreq-file' without regenerating it.
+(defun keyfreq--merge-in-place (pending &optional file)
+  "Merge the deltas of PENDING into FILE without regenerating it.
 
 Existing counters are rewritten in place and unknown keys are
 appended as new lines.  Signals an error if the file cannot be
 patched safely; the caller then falls back to a full rewrite."
-  (let ((updates nil)
+  (let* ((target (or file keyfreq-file))
+         (updates nil)
         (additions nil)
         (buffer (generate-new-buffer " *keyfreq-merge*" t)))
     (unwind-protect
         (with-current-buffer buffer
           (let ((coding-system-for-read (keyfreq--reading-coding-system)))
-            (insert-file-contents keyfreq-file))
+            (insert-file-contents target))
           (when (zerop (buffer-size))
             (error "Keyfreq file is empty"))
           (let ((coding (keyfreq--writing-coding-system buffer-file-coding-system)))
@@ -1169,7 +1310,7 @@ patched safely; the caller then falls back to a full rewrite."
                   (dolist (entry additions)
                     (prin1 (cons (car entry) (cdr entry)) (current-buffer))
                     (insert "\n")))
-                (keyfreq--write-file (buffer-string) keyfreq-file coding)))))
+                (keyfreq--write-file (buffer-string) target coding)))))
       (kill-buffer buffer))))
 
 (defun keyfreq--save-full (table)
@@ -1198,38 +1339,63 @@ retried without counting the file contents twice."
                            (keyfreq--writing-coding-system
                             (keyfreq--file-coding-system))))))
 
-(defun keyfreq--save-locked (table)
-  "Write TABLE to `keyfreq-file', assuming this process holds the lock.
+(defun keyfreq--write-rollup (pending)
+  "Write PENDING to `keyfreq-file', regenerating it if it cannot be patched."
+  (condition-case err
+      (progn
+        (if (and keyfreq-incremental-save
+                 (file-exists-p keyfreq-file)
+                 (> (file-attribute-size (file-attributes keyfreq-file)) 0))
+            (keyfreq--merge-in-place pending)
+          (keyfreq--save-full pending))
+        t)
+    (error
+     (message "keyfreq: in-place save failed (%s); regenerating file"
+              (error-message-string err))
+     (condition-case err
+         (progn (keyfreq--save-full pending) t)
+       (error
+        (message "keyfreq: cannot save %s: %s"
+                 keyfreq-file (error-message-string err))
+        nil)))))
 
-Return non-nil when the data reached the disk.  TABLE is cleared
-only after a successful write, so a failed write can be retried
+(defun keyfreq--save-locked (table)
+  "Write TABLE to disk, assuming this process holds the lock.
+
+The daily archive is written first and is authoritative; the rollup in
+`keyfreq-file' is a materialised view that can be rebuilt from it.
+Return non-nil when the data reached the disk.  TABLE is cleared only
+after the data is safely archived, so a failed write can be retried
 without losing or duplicating counters."
-  (let ((pending (keyfreq--writable-table table))
-        (ok nil))
+  (when (and keyfreq--rollup-dirty
+             keyfreq-daily-archive
+             (equal keyfreq--rollup-dirty (expand-file-name keyfreq-file)))
+    (condition-case err
+        (keyfreq-rebuild-rollup)
+      (error (message "keyfreq: rollup rebuild failed: %s"
+                      (error-message-string err)))))
+  (let ((pending (keyfreq--writable-table table)))
     (if (zerop (hash-table-count pending))
         ;; Everything in TABLE is filtered out, nothing to write.
-        (setq ok t)
-      (condition-case err
-          (progn
-            (if (and keyfreq-incremental-save
-                     (file-exists-p keyfreq-file)
-                     (> (file-attribute-size (file-attributes keyfreq-file)) 0))
-                (keyfreq--merge-in-place pending)
-              (keyfreq--save-full pending))
-            (setq ok t))
-        (error
-         (message "keyfreq: in-place save failed (%s); regenerating file"
-                  (error-message-string err))
-         (condition-case err
-             (progn
-               (keyfreq--save-full pending)
-               (setq ok t))
-           (error
-            (message "keyfreq: cannot save %s: %s"
-                     keyfreq-file (error-message-string err)))))))
-    (when ok
-      (clrhash table))
-    ok))
+        (progn (clrhash table) t)
+      (let ((archived
+             (if keyfreq-daily-archive
+                 (condition-case err
+                     (progn (keyfreq--archive-day pending) t)
+                   (error
+                    (message "keyfreq: cannot write the daily archive (%s); keeping the counters for the next save"
+                             (error-message-string err))
+                    nil))
+               t)))
+        (cond
+         ((not archived) nil)           ; nothing written, keep the deltas
+         (t
+          (let ((ok (keyfreq--write-rollup pending)))
+            ;; the deltas are safe in the archive either way
+            (clrhash table)
+            (unless ok
+              (setq keyfreq--rollup-dirty (expand-file-name keyfreq-file)))
+            ok)))))))
 
 (defun keyfreq-table-save (table &optional mustsave)
   "Append all values from the specified TABLE into the

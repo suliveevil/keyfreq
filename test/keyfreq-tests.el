@@ -326,6 +326,60 @@
                   (= #o600 (logand #o777 (file-modes old))))
            (delete-file new) (delete-file old)))
 
+(kf-test "每一笔保存同时写入当天的日文件"
+         (let* ((dir (make-temp-file "keyfreq-days-" t))
+                (file (expand-file-name "keyfreq-log" dir))
+                (keyfreq-daily-directory (expand-file-name "days" dir))
+                (keyfreq-file file)
+                (keyfreq-file-lock (concat file ".lock")))
+           (setq keyfreq--rollup-dirty nil)
+           (with-temp-file file (insert "(((org-mode . cmd-0) . 100)\n)"))
+           (keyfreq-table-save (kf-make-table '((org-mode cmd-0 7)
+                                               (org-mode cmd-new 2))) t)
+           (kf-ok "当天文件存在" (file-exists-p (keyfreq--daily-file)))
+           (kf-ok "基线已备份" (file-exists-p (keyfreq--daily-baseline)))
+           (kf-ok "日文件只含当日增量"
+                  (= 7 (kf-get (keyfreq--daily-file) '(org-mode . cmd-0))))
+           (kf-ok "新命令也进了日文件"
+                  (= 2 (kf-get (keyfreq--daily-file) '(org-mode . cmd-new))))
+           (kf-ok "汇总仍是累计值" (= 107 (kf-get file '(org-mode . cmd-0))))
+           (kf-ok "range(1) 就是当天"
+                  (= 7 (gethash '(org-mode . cmd-0) (keyfreq--range-table 1))))
+           (kf-ok "range(30) 也包含当天"
+                  (= 7 (gethash '(org-mode . cmd-0) (keyfreq--range-table 30))))
+           (delete-directory dir t)))
+
+(kf-test "汇总可以从基线加日文件重建"
+         (let* ((dir (make-temp-file "keyfreq-days-" t))
+                (file (expand-file-name "keyfreq-log" dir))
+                (keyfreq-daily-directory (expand-file-name "days" dir))
+                (keyfreq-file file)
+                (keyfreq-file-lock (concat file ".lock")))
+           (setq keyfreq--rollup-dirty nil)
+           (with-temp-file file (insert "(((org-mode . cmd-0) . 100)\n)"))
+           (keyfreq-table-save (kf-make-table '((org-mode cmd-0 7))) t)
+           (with-temp-file file (insert "()))"))     ; vandalise the rollup
+           (keyfreq-rebuild-rollup)
+           (kf-ok "重建后恢复原值" (= 107 (kf-get file '(org-mode . cmd-0))))
+           (kf-ok "重建后文件可解析"
+                  (integerp (cdr (car (kf-read-entries file)))))
+           (delete-directory dir t)))
+
+(kf-test "关闭日归档时行为与以前一致"
+         (let* ((dir (make-temp-file "keyfreq-days-" t))
+                (file (expand-file-name "keyfreq-log" dir))
+                (keyfreq-daily-directory (expand-file-name "days" dir))
+                (keyfreq-daily-archive nil)
+                (keyfreq-file file)
+                (keyfreq-file-lock (concat file ".lock")))
+           (setq keyfreq--rollup-dirty nil)
+           (with-temp-file file (insert "()"))
+           (keyfreq-table-save (kf-make-table '((org-mode cmd-0 4))) t)
+           (kf-ok "没有创建日文件目录"
+                  (not (file-exists-p keyfreq-daily-directory)))
+           (kf-ok "汇总照常写入" (= 4 (kf-get file '(org-mode . cmd-0))))
+           (delete-directory dir t)))
+
 (princ (format "\n----------------------------------------\n%d passed, %d failed\n"
                kf-pass kf-fail))
 (delete-directory kf-tmp t)
