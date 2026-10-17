@@ -351,3 +351,155 @@ canvas[hidden] {
         max-width: 100%;
     }
 }
+
+/* ---------- heat map card ---------- */
+
+.card {
+    margin: 0 0 40px 0;
+    padding: 18px 20px 12px 20px;
+    border: 1px solid #e3e3e6;
+    border-radius: 16px;
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, .05), 0 10px 28px rgba(0, 0, 0, .05);
+}
+
+.card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+.card-head h2 {
+    margin: 0;
+    padding: 0;
+    border: 0;
+    font-size: 20px;
+    font-weight: 600;
+}
+
+.controls {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    font-size: 13px;
+    color: #555;
+}
+
+.controls label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.controls select {
+    max-width: 240px;
+    padding: 5px 8px;
+    border: 1px solid #cfcfd4;
+    border-radius: 6px;
+    background: #fff;
+    font: inherit;
+    font-size: 13px;
+}
+
+.scope {
+    color: #888;
+    font-variant-numeric: tabular-nums;
+}
+
+.heatmap-wrap {
+    position: relative;
+}
+
+#heatmap {
+    display: block;
+    max-width: 100%;
+    height: auto !important;
+    margin: 10px 0 4px 0;
+}
+
+.key-tip {
+    position: absolute;
+    z-index: 5;
+    padding: 5px 9px;
+    border-radius: 6px;
+    background: #1d1d1f;
+    color: #fff;
+    font-size: 12px;
+    white-space: nowrap;
+    pointer-events: none;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, .25);
+}
+
+.hint {
+    margin: 6px 0 0 0;
+    color: #8a8a8f;
+    font-size: 12px;
+}
+
+@media (prefers-color-scheme: dark) {
+    body {
+        background: #151517;
+        color: #e8e8ea;
+    }
+
+    .header {
+        background: #1b1b1e;
+        border-color: #333;
+    }
+
+    .header a {
+        color: #c8c8cc;
+    }
+
+    .header a:hover,
+    .header a:focus-visible {
+        background: #2a2a2e;
+        color: #ff6b6b;
+    }
+
+    .card {
+        background: #1c1c1f;
+        border-color: #34343a;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, .5), 0 10px 28px rgba(0, 0, 0, .35);
+    }
+
+    .controls {
+        color: #b9b9bf;
+    }
+
+    .controls select {
+        background: #26262a;
+        border-color: #44444b;
+        color: #e8e8ea;
+    }
+
+    table td,
+    table th {
+        border-color: #34343a;
+    }
+
+    table tbody tr:nth-child(even) {
+        background: #1f1f23;
+    }
+
+    table tbody tr:hover {
+        background: #2a2a2f;
+    }
+
+    .summary,
+    .hint,
+    .scope {
+        color: #9a9aa0;
+    }
+}
+
+/* keep long mode names on one line in the sidebar */
+.header a .name {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}

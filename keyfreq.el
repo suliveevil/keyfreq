@@ -516,8 +516,46 @@ keystroke description."
                      count (funcall shortcut command)))))
   (insert "</tbody>\n</table>\n"))
 
+(defun keyfreq--html-insert-card (modes table)
+  "Insert the interactive heat map card.
+
+MODES is the value of `keyfreq--html-modes' for TABLE.  The card holds
+a single canvas plus the controls that choose what it shows."
+  (insert "<section class=\"card\" id=\"heatmap-card\">\n")
+  (insert "<div class=\"card-head\">\n")
+  (insert "<h2>Keyboard heat map</h2>\n")
+  (insert "<div class=\"controls\">\n")
+  (insert "<label>Mode <select id=\"mode-select\">")
+  (insert "<option value=\"all\">All major modes</option>")
+  (dolist (entry modes)
+    (insert (format "<option value=\"%s\">%s (%s)</option>"
+                    (keyfreq--html-escape (car entry))
+                    (keyfreq--html-escape (car entry))
+                    (keyfreq--html-number (cdr entry)))))
+  (insert "</select></label>\n")
+  (insert "<label>Scale <select id=\"scale-select\">"
+          "<option value=\"sqrt\" selected>sqrt</option>"
+          "<option value=\"linear\">linear</option>"
+          "<option value=\"log\">log</option>"
+          "</select></label>\n")
+  (insert "<span class=\"scope\" id=\"scope-summary\"></span>\n")
+  (insert "</div>\n</div>\n")
+  (insert "<div class=\"heatmap-wrap\">\n")
+  (insert "<canvas id=\"heatmap\" width=\"900\" height=\"340\"></canvas>\n")
+  (insert "<div class=\"key-tip\" id=\"key-tip\" hidden></div>\n")
+  (insert "<p class=\"empty\" id=\"empty-note\" hidden>"
+          "no keyboard shortcuts in this selection</p>\n")
+  (insert "</div>\n")
+  (insert "<p class=\"hint\">Hover a key for its press count.  Each command "
+          "is counted once, on its first real binding, resolved in that "
+          "mode's own keymap.</p>\n")
+  (insert "</section>\n"))
+
 (defun keyfreq-html (filename &optional confirm)
-  "Save an HTML file as FILENAME with all the statistics of each mode."
+  "Save a plain HTML report of the statistics as FILENAME.
+
+Kept for compatibility; the interactive keyboard report is
+`keyfreq-html-v2', which this now shares its implementation with."
   (interactive
    (list (read-file-name "Write HTML file: " nil nil nil
                          (expand-file-name "keyfreq.html" default-directory))
@@ -526,85 +564,18 @@ keystroke description."
        (file-exists-p filename)
        (or (y-or-n-p (format "File `%s' exists; overwrite? " filename))
            (error "Canceled")))
-  (let ((table (copy-hash-table keyfreq-table)))
-    (keyfreq-table-load table)
-    (let* ((modes (keyfreq--html-modes table))
-           (used (make-hash-table :test 'equal))
-           (ids (make-hash-table :test 'eq))
-           (total (car (keyfreq-list table 'no-sort)))
-           (index (keyfreq--html-shortcut-index table modes))
-           (per-mode (car index))
-           (all-keys (cdr index))
-           (cell (lambda (list shortcut)
-                   (with-temp-buffer
-                     (keyfreq--html-insert-table list shortcut)
-                     (buffer-string)))))
-      (dolist (entry modes)
-        (puthash (car entry)
-                 (keyfreq--html-id (symbol-name (car entry)) used)
-                 ids))
-      ;; bind the coding system around the whole writer: `with-temp-file'
-      ;; writes *after* its body, so a `let' inside would be too late.
-      (let ((coding-system-for-write 'utf-8-unix))
-        (with-temp-file filename
-          (insert "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n")
-          (insert "<meta charset=\"utf-8\">\n")
-          (insert "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
-          (insert (format "<title>Keyfreq Report - %s commands</title>\n"
-                          (keyfreq--html-number (hash-table-count table))))
-          (insert "<style>\n")
-          (keyfreq--html-insert-asset "style.css")
-          (insert "\n</style>\n</head>\n<body>\n")
-          (insert "<nav class=\"header\" id=\"header\">\n<ul>\n")
-          (insert (format "<li><a href=\"#anchor-all\"><span class=\"name\">All major modes</span><span class=\"count\">%s</span></a></li>\n"
-                          (keyfreq--html-number total)))
-          (dolist (entry modes)
-            (insert (format "<li><a href=\"#%s\"><span class=\"name\">%s</span><span class=\"count\">%s</span></a></li>\n"
-                            (gethash (car entry) ids)
-                            (keyfreq--html-escape (car entry))
-                            (keyfreq--html-number (cdr entry)))))
-          (insert "</ul>\n</nav>\n<main class=\"content\">\n")
-          (insert "<h1>Keyfreq Report</h1>\n")
-          (insert (format "<p class=\"summary\">%s mode/command pairs &middot; %d modes &middot; %s invocations &middot; generated %s</p>\n"
-                          (keyfreq--html-number (hash-table-count table))
-                          (length modes)
-                          (keyfreq--html-number total)
-                          (format-time-string "%Y-%m-%d %H:%M")))
-          (insert "<section data-mode=\"all\">\n")
-          (insert "<h2 id=\"anchor-all\">All major modes</h2>\n")
-          (insert "<canvas></canvas>\n")
-          (insert (funcall cell
-                           (keyfreq-list (keyfreq-groups-major-modes table))
-                           (lambda (command) (or (gethash command all-keys) ""))))
-          (insert "</section>\n")
-          (dolist (entry modes)
-            (let* ((mode (car entry))
-                   (keys (gethash mode per-mode)))
-              (insert (format "<section data-mode=\"%s\">\n"
-                              (keyfreq--html-escape (symbol-name mode))))
-              (insert (format "<h2 id=\"%s\">%s</h2>\n"
-                              (gethash mode ids)
-                              (keyfreq--html-escape mode)))
-              (insert "<canvas></canvas>\n")
-              (insert (funcall cell
-                               (keyfreq-list (keyfreq-filter-major-mode table mode))
-                               (lambda (command)
-                                 (or (gethash command keys) ""))))
-              (insert "</section>\n")))
-          (insert "</main>\n<script>\n")
-          (keyfreq--html-insert-asset "script.js")
-          (insert "\n</script>\n</body>\n</html>\n")))))
-  (message "keyfreq: wrote %s" filename))
+  (keyfreq-html-v2 filename nil))
 
 (defun keyfreq-html-v2 (&optional filename open)
   "Save a self-contained HTML report with a keyboard heat map.
 
 The report embeds `style.css' and `script.js', so it can be moved,
-mailed or committed as a single file.
+mailed or committed as a single file.  A single canvas shows the heat
+map for the major mode picked in the Mode menu.
 
-FILENAME defaults to a fresh file in `temporary-file-directory'
-and the previously generated temporary report is removed.  When
-OPEN is non-nil the report is shown with `browse-url'.
+FILENAME defaults to a fresh file in `temporary-file-directory' and
+the previously generated temporary report is removed.  When OPEN is
+non-nil the report is shown with `browse-url'.
 
 Interactively, use a prefix argument to choose FILENAME."
   (interactive
@@ -625,17 +596,16 @@ Interactively, use a prefix argument to choose FILENAME."
                      (make-temp-file
                       (expand-file-name "keyfreq-" temporary-file-directory)
                       nil ".html")))
-           (cell
-            (lambda (list shortcut)
-              (with-temp-buffer
-                (keyfreq--html-insert-table list shortcut)
-                (buffer-string)))))
+           (cell (lambda (list shortcut)
+                   (with-temp-buffer
+                     (keyfreq--html-insert-table list shortcut)
+                     (buffer-string)))))
       (dolist (entry modes)
         (puthash (car entry)
                  (keyfreq--html-id (symbol-name (car entry)) used)
                  ids))
       ;; bind the coding system around the whole writer: `with-temp-file'
-      ;; writes *after* its body, so a `let' inside would be too late.
+      ;; writes after its body, so a `let' inside would be too late.
       (let ((coding-system-for-write 'utf-8-unix))
         (with-temp-file file
           (insert "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n")
@@ -662,9 +632,9 @@ Interactively, use a prefix argument to choose FILENAME."
                           (length modes)
                           (keyfreq--html-number total)
                           (format-time-string "%Y-%m-%d %H:%M")))
+          (keyfreq--html-insert-card modes table)
           (insert "<section data-mode=\"all\">\n")
           (insert "<h2 id=\"anchor-all\">All major modes</h2>\n")
-          (insert "<canvas></canvas>\n")
           (insert (funcall cell
                            (keyfreq-list (keyfreq-groups-major-modes table))
                            (lambda (command) (or (gethash command all-keys) ""))))
@@ -677,7 +647,6 @@ Interactively, use a prefix argument to choose FILENAME."
               (insert (format "<h2 id=\"%s\">%s</h2>\n"
                               (gethash mode ids)
                               (keyfreq--html-escape mode)))
-              (insert "<canvas></canvas>\n")
               (insert (funcall cell
                                (keyfreq-list (keyfreq-filter-major-mode table mode))
                                (lambda (command)

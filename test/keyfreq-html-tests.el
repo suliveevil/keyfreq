@@ -150,6 +150,31 @@
                    (string-match-p "<td data-count=\"57708\">" html))
            (delete-file log) (delete-file out)))
 
+(kfh-test "there is exactly one heat map, driven by a mode menu"
+         (let* ((log (kfh-fixture '(((org-mode . next-line) . 40)
+                                    ((dired-mode . dired-toggle-marks) . 7))))
+                (keyfreq-file log)
+                (out (expand-file-name "card.html" kfh-tmp)))
+           (require 'dired)
+           (keyfreq-html-v2 out nil)
+           (let ((html (kfh-slurp out)))
+             (kfh-ok "exactly one canvas element"
+                     (= 1 (let ((n 0) (p 0))
+                            (while (string-match "<canvas id=\"heatmap\"" html p)
+                              (setq n (1+ n) p (match-end 0)))
+                            n)))
+             (kfh-ok "there is a mode select"
+                     (string-match-p "id=\"mode-select\"" html))
+             (kfh-ok "it lists every mode plus All"
+                     (and (string-match-p "<option value=\"all\">" html)
+                          (string-match-p "<option value=\"org-mode\">" html)
+                          (string-match-p "<option value=\"dired-mode\">" html)))
+             (kfh-ok "there is a scale select"
+                     (string-match-p "id=\"scale-select\"" html))
+             (kfh-ok "no leftover per-section canvases"
+                     (not (string-match-p "<canvas></canvas>" html))))
+           (delete-file log) (delete-file out)))
+
 (kfh-test "mode names are escaped everywhere they appear"
          (let* ((weird (intern (concat "weird<mode>&" "\"" "name")))
                 (log (kfh-fixture (list (cons (cons weird 'next-line) 11))))

@@ -187,183 +187,266 @@
         return false;
     }
 
-    var measureCtx = null;
+    /* ---------- geometry and colour ---------- */
 
-    function textWidth(text, px, bold) {
-        if (!measureCtx) {
-            measureCtx = document.createElement("canvas").getContext("2d");
-        }
-        measureCtx.font = (bold ? "bold " : "") + px + "px Arial, sans-serif";
-        return measureCtx.measureText(String(text)).width;
+    var U = 34;                 /* one key unit, CSS px */
+    var GAP = 2;                /* gap between key caps */
+    var RADIUS = 6;
+
+    function roundRect(ctx, x, y, w, h, r) {
+        var radius = Math.min(r, w / 2, h / 2);
+        ctx.beginPath();
+        ctx.moveTo(x + radius, y);
+        ctx.arcTo(x + w, y, x + w, y + h, radius);
+        ctx.arcTo(x + w, y + h, x, y + h, radius);
+        ctx.arcTo(x, y + h, x, y, radius);
+        ctx.arcTo(x, y, x + w, y, radius);
+        ctx.closePath();
     }
 
-    /* The "no shortcuts" note is real DOM text: it cannot be clipped by the
-       canvas edge and screen readers / printing see it too. */
-    function setEmptyNote(section, show) {
-        var canvas = section.querySelector("canvas");
-        var note = section.querySelector("p.empty");
-        if (show) {
-            if (!note) {
-                note = document.createElement("p");
-                note.className = "empty";
-                note.textContent = "no keyboard shortcuts in this mode";
-                section.insertBefore(note, canvas);
+    /* One accent ramp instead of a rainbow: a neutral key cap reddens as it
+       gets hotter.  A rainbow (jet) ramp invents boundaries that are not in
+       the data; this reads the way a heat map should. */
+    function heatRGB(t) {
+        t = Math.max(0, Math.min(1, t));
+        return [Math.round(236 + (203 - 236) * t),
+                Math.round(236 + (0 - 236) * t),
+                Math.round(239 + (0 - 239) * t)];
+    }
+
+    function applyScale(value, max, mode) {
+        if (!max) return 0;
+        if (mode === "log") return Math.log1p(value) / Math.log1p(max);
+        if (mode === "sqrt") return Math.sqrt(value / max);
+        return value / max;
+    }
+
+    /* ---------- data ---------- */
+
+    function readTable(section) {
+        var cells = section.querySelectorAll("td[data-count]");
+        var items = [];
+        for (var i = 0; i < cells.length; i++) {
+            items.push({
+                count: parseInt(cells[i].getAttribute("data-count"), 10) || 0,
+                text: cells[i].textContent
+            });
+        }
+        return items;
+    }
+
+    function keyBag(items, skip) {
+        var bag = Object.create(null);
+        for (var i = 0; i < items.length; i++) {
+            var item = items[i];
+            if (!item.count) continue;
+            var binding = firstBinding(item.text);
+            if (!binding) continue;
+            var keys = shortcutKeys(binding);
+            var seen = Object.create(null);
+            for (var k = 0; k < keys.length; k++) {
+                var key = keys[k];
+                if (seen[key] || skip.indexOf(key) >= 0) continue;
+                if (!mapsToKey(key)) continue;
+                seen[key] = true;
+                bag[key] = (bag[key] || 0) + item.count;
             }
-            canvas.hidden = true;
-            /* the author stylesheet sets `display:block`, which beats the
-               UA `[hidden]` rule, so hide it explicitly as well */
-            canvas.style.display = "none";
-        } else {
-            if (note && note.parentNode) note.parentNode.removeChild(note);
-            canvas.hidden = false;
-            canvas.style.display = "";
         }
+        return bag;
     }
 
-    function drawSection(section, skip) {
-        var canvas = section.querySelector("canvas");
-        var table = section.querySelector("table");
-        if (!canvas || !table) return;
+    /* ---------- drawing ---------- */
 
-        var freq = keyFrequency(table, skip);
-        var max = 0;
-        var total = 0;
-        Object.keys(freq).forEach(function (name) {
-            if (!mapsToKey(name)) return;
-            max = Math.max(max, freq[name]);
-            total += freq[name];
-        });
+    var keyBoxes = [];          /* hit-test rectangles of the last draw */
 
-        if (max === 0) {
-            setEmptyNote(section, true);
-            return;
-        }
-        setEmptyNote(section, false);
-
-        var maxX = 0;
-        var maxY = 0;
+    function draw(canvas, bag, scaleMode) {
+        var dpr = window.devicePixelRatio || 1;
+        var maxX = 0, maxY = 0;
         LAYOUT.forEach(function (k) {
             maxX = Math.max(maxX, k.x + k.width);
             maxY = Math.max(maxY, k.y + k.height);
         });
 
-        var u = 32;                                 /* one key unit, CSS px */
-        var labelSize = Math.round(u * 0.34);
-        var labelX = (maxX + 1.5) * u;
-        var labels = [String(max), "0", total.toLocaleString() + " presses"];
-        /* size the canvas from the widest label, so nothing is ever clipped */
-        var labelW = labels.reduce(function (w, t) {
-            return Math.max(w, textWidth(t, labelSize));
-        }, 0);
-        var cssW = Math.ceil(labelX + labelW + 6);
-        var cssH = Math.ceil((maxY + 0.4) * u);
+        var max = 0, total = 0;
+        Object.keys(bag).forEach(function (name) {
+            max = Math.max(max, bag[name]);
+            total += bag[name];
+        });
 
-        var dpr = window.devicePixelRatio || 1;
-        canvas.width = Math.round(cssW * dpr);      /* device pixels */
+        var legendX = (maxX + 0.8) * U;
+        var labelSize = Math.round(U * 0.32);
+        var cssW = Math.round(legendX + U * 3.4);
+        var cssH = Math.round((maxY + 0.6) * U);
+
+        canvas.width = Math.round(cssW * dpr);
         canvas.height = Math.round(cssH * dpr);
         canvas.style.width = cssW + "px";
         canvas.style.height = cssH + "px";
 
         var ctx = canvas.getContext("2d");
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);     /* draw in CSS pixels */
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.clearRect(0, 0, cssW, cssH);
+
+        var dark = window.matchMedia &&
+            window.matchMedia("(prefers-color-scheme: dark)").matches;
+        var surface = dark ? "#26262a" : "#eceef1";
+        var ink = dark ? "#e8e8ea" : "#1d1d1f";
+        var muted = dark ? "#9a9aa0" : "#6b6b70";
+        var edge = dark ? "rgba(255,255,255,.10)" : "rgba(0,0,0,.10)";
+
+        keyBoxes = [];
         ctx.textBaseline = "middle";
-        ctx.font = (u * 0.28).toFixed(1) + "px Arial, sans-serif";
+        ctx.font = (U * 0.26).toFixed(1) + "px -apple-system, Arial, sans-serif";
 
         LAYOUT.forEach(function (key) {
-            var x = key.x * u;
-            var y = key.y * u;
-            var w = key.width * u;
-            var h = key.height * u;
+            var x = key.x * U + GAP / 2;
+            var y = key.y * U + GAP / 2;
+            var w = key.width * U - GAP;
+            var h = key.height * U - GAP;
             var value = 0;
-            key.name.forEach(function (n) { value += freq[n] || 0; });
+            key.name.forEach(function (n) { value += bag[n] || 0; });
+            var t = applyScale(value, max, scaleMode);
+            var rgb = heatRGB(t);
+            var hot = t > 0.02;
 
-            ctx.fillStyle = "#DDDDDD";
-            ctx.fillRect(x, y, w, h);
-            ctx.fillStyle = "#FFFFFF";
-            ctx.fillRect(x + 0.15 * u, y + 0.1 * u, w - 0.3 * u, h - 0.3 * u);
+            /* key cap: soft shadow, rounded, subtle border */
+            ctx.save();
+            ctx.shadowColor = dark ? "rgba(0,0,0,.55)" : "rgba(0,0,0,.10)";
+            ctx.shadowBlur = 3;
+            ctx.shadowOffsetY = 1;
+            ctx.fillStyle = hot
+                ? "rgb(" + rgb[0] + "," + rgb[1] + "," + rgb[2] + ")"
+                : surface;
+            roundRect(ctx, x, y, w, h, RADIUS);
+            ctx.fill();
+            ctx.restore();
 
-            if (value > 0) {
-                var t = value / max;
-                ctx.fillStyle = heatColor(t, 0.75);
-                ctx.fillRect(x, y, w, h);
-                ctx.fillStyle = t > 0.55 ? "#fff" : "#111";   /* readable label */
-            } else {
-                ctx.fillStyle = "#111";
-            }
-            ctx.fillText(key.name[0], x + 0.25 * u, y + h / 2);
+            ctx.strokeStyle = hot ? "rgba(0,0,0,.12)" : edge;
+            ctx.lineWidth = 1;
+            roundRect(ctx, x + 0.5, y + 0.5, w - 1, h - 1, RADIUS - 0.5);
+            ctx.stroke();
+
+            /* label: dark on light keys, white once the key is hot */
+            ctx.fillStyle = hot && t > 0.55 ? "#fff" : ink;
+            var label = key.name[0];
+            var tw = ctx.measureText(label).width;
+            ctx.fillText(label, x + (w - tw) / 2, y + h / 2 + 0.5);
+
+            keyBoxes.push({
+                x: x, y: y, w: w, h: h,
+                names: key.name,
+                value: value,
+                share: total ? value / total : 0
+            });
         });
 
-        /* colour scale plus its three labels */
-        var barX = (maxX + 0.6) * u;
-        var barW = u * 0.7;
-        var barTop = u * 0.5;
-        var barH = maxY * u - u;
-        for (var i = 0; i < 128; i++) {
-            ctx.fillStyle = heatColor(1 - i / 128, 1);
-            ctx.fillRect(barX, barTop + (i * barH) / 128, barW, barH / 128 + 1);
-        }
+        /* legend: vertical ramp plus three labels */
+        if (!max) return { max: 0, total: 0 };
 
-        ctx.font = labelSize + "px Arial, sans-serif";
-        ctx.fillStyle = "#111";
-        ctx.fillText(labels[0], labelX, barTop);
-        ctx.fillText(labels[1], labelX, barTop + barH);
-        ctx.fillText(labels[2], labelX, barTop + labelSize + 6);
+        var barW = U * 0.55;
+        var barTop = U * 0.7;
+        var barH = maxY * U - U * 1.4;
+        for (var i = 0; i < 120; i++) {
+            var rgb2 = heatRGB(1 - i / 120);
+            ctx.fillStyle = "rgb(" + rgb2[0] + "," + rgb2[1] + "," + rgb2[2] + ")";
+            ctx.fillRect(legendX, barTop + (i * barH) / 120, barW, barH / 120 + 1);
+        }
+        ctx.strokeStyle = edge;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(legendX + 0.5, barTop + 0.5, barW - 1, barH - 1);
+
+        ctx.font = labelSize + "px -apple-system, Arial, sans-serif";
+        ctx.fillStyle = ink;
+        ctx.fillText(max.toLocaleString(), legendX + barW + 8, barTop);
+        ctx.fillStyle = muted;
+        ctx.fillText("0", legendX + barW + 8, barTop + barH);
+        ctx.fillText(total.toLocaleString(), legendX + barW + 8,
+                     barTop + labelSize + 10);
+        ctx.fillText("presses", legendX + barW + 8,
+                     barTop + labelSize * 2 + 12);
+
+        return { max: max, total: total };
     }
+
+    /* ---------- wiring ---------- */
 
     function sections() {
-        return document.querySelectorAll("section[data-mode]");
-    }
-
-    function redraw(skip) {
-        var all = sections();
-        for (var i = 0; i < all.length; i++) {
-            drawSection(all[i], skip);
-        }
-    }
-
-    /* "[&quot;C&quot;,&quot;S&quot;]" -> ["C","S"]; never eval(). */
-    function parseSkip(text) {
-        var trimmed = String(text || "").trim();
-        if (!trimmed) return [];
-        var value = JSON.parse(trimmed);          // throws on bad input
-        if (!Array.isArray(value)) throw new Error("expected an array");
-        return value.map(String);
+        return Array.prototype.slice.call(
+            document.querySelectorAll("section[data-mode]"));
     }
 
     function boot() {
-        document.body.insertAdjacentHTML(
-            "afterbegin",
-            '<div class="skipbar">' +
-            '<label for="skipkeys">Skip keys</label>' +
-            '<input id="skipkeys" type="text" spellcheck="false" ' +
-            'placeholder=\'["C", "S", "M"]\'>' +
-            '<button id="skipgo" type="button">Redraw</button>' +
-            '<span id="skiperror" role="status" aria-live="polite"></span>' +
-            "</div>");
+        var canvas = document.getElementById("heatmap");
+        var modeSelect = document.getElementById("mode-select");
+        if (!canvas || !modeSelect) return;
 
-        var input = document.getElementById("skipkeys");
-        var error = document.getElementById("skiperror");
-
-        function apply() {
-            try {
-                var skip = parseSkip(input.value);
-                error.textContent = "";
-                input.setAttribute("aria-invalid", "false");
-                redraw(skip);
-            } catch (e) {
-                error.textContent = "not a valid list (" + e.message +
-                    ') - try ["C", "S"]';
-                input.setAttribute("aria-invalid", "true");
-            }
-        }
-
-        document.getElementById("skipgo").addEventListener("click", apply);
-        input.addEventListener("keydown", function (e) {
-            if (e.key === "Enter") { e.preventDefault(); apply(); }
+        var scaleSelect = document.getElementById("scale-select");
+        var summary = document.getElementById("scope-summary");
+        var emptyNote = document.getElementById("empty-note");
+        var tip = document.getElementById("key-tip");
+        var wrap = canvas.parentNode;
+        var all = sections();
+        var byMode = Object.create(null);
+        all.forEach(function (section) {
+            byMode[section.getAttribute("data-mode")] = section;
         });
 
-        redraw(parseSkip(""));
+        function render() {
+            var mode = modeSelect.value;
+            var section = byMode[mode] || byMode.all;
+            var items = readTable(section);
+            var bag = keyBag(items, []);
+            var stats = draw(canvas, bag, scaleSelect ? scaleSelect.value : "sqrt");
+
+            canvas.hidden = stats.max === 0;
+            emptyNote.hidden = stats.max !== 0;
+            if (stats.max === 0) {
+                emptyNote.textContent = mode === "all"
+                    ? "no keyboard shortcuts recorded"
+                    : "no keyboard shortcuts in " + mode;
+            }
+            if (summary) {
+                summary.textContent = (mode === "all" ? "all modes" : mode) +
+                    " \u00b7 " + stats.total.toLocaleString() + " presses";
+            }
+            tip.hidden = true;
+        }
+
+        /* hover detail */
+        canvas.addEventListener("mousemove", function (event) {
+            var rect = canvas.getBoundingClientRect();
+            var dpr = window.devicePixelRatio || 1;
+            /* the canvas may be scaled down by CSS max-width */
+            var sx = canvas.width / dpr / rect.width;
+            var sy = canvas.height / dpr / rect.height;
+            var x = (event.clientX - rect.left) * sx;
+            var y = (event.clientY - rect.top) * sy;
+
+            var hit = null;
+            for (var i = 0; i < keyBoxes.length; i++) {
+                var b = keyBoxes[i];
+                if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) {
+                    hit = b;
+                    break;
+                }
+            }
+            if (!hit) { tip.hidden = true; canvas.style.cursor = "default"; return; }
+            canvas.style.cursor = "pointer";
+            tip.hidden = false;
+            tip.innerHTML = "<b>" + hit.names[0] + "</b> " +
+                hit.value.toLocaleString() + " presses" +
+                (hit.share ? " \u00b7 " + (hit.share * 100).toFixed(1) + "%" : "");
+            var left = event.clientX - rect.left + 14;
+            var top = event.clientY - rect.top + 14;
+            if (left + tip.offsetWidth > rect.width) left = rect.width - tip.offsetWidth - 8;
+            tip.style.left = left + "px";
+            tip.style.top = top + "px";
+        });
+        canvas.addEventListener("mouseleave", function () { tip.hidden = true; });
+
+        modeSelect.addEventListener("change", render);
+        if (scaleSelect) scaleSelect.addEventListener("change", render);
+        render();
     }
 
     if (document.readyState === "loading") {
