@@ -79,8 +79,15 @@ Here is the installation to use with `use-package` and `quelpa-use-package`:
 ## How to use
 
 Use `keyfreq-show` to see how many times you used a command.
-Use `keyfreq-html` to get the original rendered HTML page.
+Use `keyfreq-html` to write a plain HTML table of the statistics.
 Use `keyfreq-html-v2` to get the keyboard heat map.
+
+`keyfreq-html-v2` writes a **single self-contained HTML file** -- the
+stylesheet and the script are inlined, so the report can be moved, mailed or
+committed without losing its behaviour.  It opens the file in your browser;
+with a prefix argument (`C-u`) it asks where to save it instead of using a
+temporary file.  Modes are listed most-used first, and the "Skip keys" box
+re-colours every heat map from a JSON list such as `["C", "S"]`.
 
 ## Saving behaviour
 
