@@ -49,17 +49,15 @@ Below the map there is exactly one table -- the selected mode -- with
 `Times`, `%`, `Command` and `Shortcut` columns.  Every column header sorts, and
 clicking it again reverses the order.  Commands with no key binding sort last.
 
-Only the selected table is rendered: the other 140 stay in the document (so the
-report still reads without JavaScript) but are hidden, and they are rebuilt
+Only the selected table is rendered: the other modes stay in the document (so
+the report still reads without JavaScript) but are hidden, and they are rebuilt
 lazily when you pick them.
 
 ### Shortcuts are resolved per mode
 
 Upstream resolved every shortcut against the currently active keymaps, in
 practice `global-map`, so any command bound only in a major mode's keymap showed
-no key at all.  For `org-mode` that hid **42% of all key presses**:
-`org-return` (57,708 presses, the third most used command) displayed nothing
-even though it is `RET`.
+no key at all.
 
 The report now resolves each mode/command pair in that mode's own
 `<mode>-map`, and:
@@ -70,7 +68,12 @@ The report now resolves each mode/command pair in that mode's own
   commands, so counting a press once per binding would multiply it;
 * skips unprintable key ranges, so the file is always valid UTF-8.
 
-Coverage for `org-mode` went from **57.7% to 88.1%** of presses.
+> The figures below are the author's own usage, not a property of the patch.
+> On that log -- 5,028 mode/command pairs over 140 modes -- `org-mode` resolved
+> **57.7%** of its presses to a key with the upstream code and **88.1%** with
+> the fork.  `org-return` alone carried 57,708 presses there and displayed no
+> key, although it is `RET`.  Your own split will differ; only the mechanism
+> is general.
 
 ## Saving behaviour
 
@@ -78,8 +81,9 @@ Coverage for `org-mode` went from **57.7% to 88.1%** of presses.
 one `((major-mode . command) . count)` entry per line.
 
 Saving used to regenerate the whole file from the in-memory hash table, and the
-writer emitted entries in reverse order, so every save rewrote every line -- a
-5000-entry log changed by about 10,000 lines per save regardless of what you did.
+writer emitted entries in reverse order, so every save rewrote every line: a log
+of N entries produced a diff of roughly N lines touched, whatever you did in
+between.
 
 A save now patches the file in place:
 
@@ -111,7 +115,8 @@ file.  A failed archive write keeps the counters for the next save; a failed
 rollup write still clears them (they are safely archived) and rebuilds the
 rollup on the next save.
 
-Cost of reading a window, measured on a log this size:
+Cost of reading a window, measured on a log with about 5,000 entries (it grows
+with the number of entries, not with this particular history):
 
 | window | files | parse |
 | --- | --- | --- |
@@ -129,11 +134,13 @@ friendly to version control.
    [keyboard-layout-editor.com](http://www.keyboard-layout-editor.com/) would
    generalise it.
 2. `keyfreq` records the *command* you ran, not the keys you pressed.  The map is
-   therefore a map of **hotkeys**, not of typing.  Measured on this log, of the
-   recorded presses roughly 49% are mouse events, 22% are typing collapsed into
+   therefore a map of **hotkeys**, not of typing.  On the author's log roughly
+   49% of the recorded presses are mouse events, 22% are typing collapsed into
    the single `self-insert-command` counter, 10% resolve to no binding at all,
-   and only about **29% land on a physical key**.  The character area can never
-   be split per letter without recording `this-command-keys`.
+   and only about 29% land on a physical key -- those proportions depend
+   entirely on how you use Emacs, so treat them as an illustration, not as a
+   normalisation.  The character area can never be split per letter without
+   recording `this-command-keys`.
 3. A command with several bindings is drawn on its first one only.
 4. Auto-generated key descriptions can be surprising: in `dired`,
    `revert-buffer` is `<menu-bar> <file> <revert-buffer>` when you actually press
@@ -209,7 +216,7 @@ folder, which holds the inlined `style.css` and `script.js`:
 | `keyfreq-incremental-save` | `t` | `nil` regenerates the whole file (the old behaviour). |
 | `keyfreq-daily-archive` | `t` | Keep one file per day; `nil` writes no directory at all. |
 | `keyfreq-daily-directory` | next to `keyfreq-file` | Where the daily archives live. |
-| `keyfreq-html-history` | `t` | Read the git history for the period menu; `nil` skips it (and its ~2.3 s). |
+| `keyfreq-html-history` | `t` | Read the git history for the period menu.  `nil` skips it, which saves a few seconds on a repository with a long history of the file. |
 | `keyfreq-coding-system` | `nil` | Coding system of the file; `nil` detects it, so an existing file keeps its encoding. |
 | `keyfreq-excluded-commands` | `nil` | Commands that are never counted (noise such as `mouse-*`). |
 | `keyfreq-excluded-regexp` | `nil` | Regexps of commands that are never counted. |
