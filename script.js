@@ -461,6 +461,13 @@
 
     /* ---------- sorting ---------- */
 
+    function escapeHTML(text) {
+        return String(text)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;");
+    }
+
     function sortValue(row, key) {
         switch (key) {
         case "count":
@@ -482,43 +489,180 @@
                                        {numeric: true, sensitivity: "base"});
     }
 
-    function makeSortable(table) {
+    function sortRowsOf(table, key, direction) {
         var tbody = table.querySelector("tbody");
-        var buttons = table.querySelectorAll("th button.sort");
-        var key = "count";
-        var direction = -1;             /* tables start sorted by presses */
+        if (!tbody) return;
+        var rows = Array.prototype.slice.call(tbody.rows);
+        rows.sort(function (a, b) {
+            var x = sortValue(a, key);
+            var y = sortValue(b, key);
+            /* commands with no key binding stay at the bottom */
+            if (key === "shortcut") {
+                if (!x && y) return 1;
+                if (x && !y) return -1;
+            }
+            return compareValues(x, y) * direction;
+        });
+        rows.forEach(function (row) { tbody.appendChild(row); });
 
+        Array.prototype.forEach.call(table.querySelectorAll("th"),
+                                     function (th) {
+                                         th.removeAttribute("aria-sort");
+                                     });
+        var header = table.querySelector('button[data-sort="' + key + '"]');
+        if (header) {
+            header.parentNode.setAttribute(
+                "aria-sort", direction > 0 ? "ascending" : "descending");
+        }
+        table.dataset.sortKey = key;
+        table.dataset.sortDir = String(direction);
+    }
+
+    function makeSortable(table) {
+        var buttons = table.querySelectorAll("th button.sort");
         Array.prototype.forEach.call(buttons, function (button) {
             button.addEventListener("click", function () {
-                var next = button.getAttribute("data-sort");
-                if (next === key) {
-                    direction = -direction;
-                } else {
-                    key = next;
-                    /* numbers read best biggest-first, names A-to-Z */
-                    direction = (key === "count" || key === "percent") ? -1 : 1;
+                var key = button.getAttribute("data-sort");
+                var direction = -1;
+                if (key === table.dataset.sortKey) {
+                    direction = -parseInt(table.dataset.sortDir || "-1", 10);
+                } else if (key === "command" || key === "shortcut") {
+                    direction = 1;      /* names read best A-to-Z */
                 }
-                var rows = Array.prototype.slice.call(tbody.rows);
-                rows.sort(function (a, b) {
-                    var x = sortValue(a, key);
-                    var y = sortValue(b, key);
-                    /* commands with no key binding stay at the bottom */
-                    if (key === "shortcut") {
-                        if (!x && y) return 1;
-                        if (x && !y) return -1;
-                    }
-                    return compareValues(x, y) * direction;
-                });
-                rows.forEach(function (row) { tbody.appendChild(row); });
-
-                Array.prototype.forEach.call(table.querySelectorAll("th"),
-                                             function (th) {
-                                                 th.removeAttribute("aria-sort");
-                                             });
-                button.parentNode.setAttribute(
-                    "aria-sort", direction > 0 ? "ascending" : "descending");
+                sortRowsOf(table, key, direction);
             });
         });
+    }
+
+    /* ---------- mode statistics ---------- */
+
+    function periodModeCounts(period) {
+        /* mode -> {command: presses}; "now" uses the tables read at boot */
+        if (period === "now") return counts;
+        var out = Object.create(null);
+        if (!history) return out;
+        var p = history.periodIndex[period];
+        if (p === undefined) return out;
+        var rows = history.rows;
+        var names = history.names;
+        for (var i = 0; i < rows.length; i++) {
+            var row = rows[i];
+            if (row[0] !== p) continue;
+            var mode = names[row[1]];
+            var command = names[row[2]];
+            if (!out[mode]) out[mode] = Object.create(null);
+            out[mode][command] = (out[mode][command] || 0) + row[3];
+        }
+        return out;
+    }
+
+    function realModes(data) {
+        return Object.keys(data).filter(function (mode) { return mode !== "all"; });
+    }
+
+    function modeTotals(data) {
+        var totals = Object.create(null);
+        realModes(data).forEach(function (mode) {
+            var sum = 0;
+            var bag = data[mode];
+            Object.keys(bag).forEach(function (command) { sum += bag[command]; });
+            totals[mode] = sum;
+        });
+        return totals;
+    }
+
+    function number(n) {
+        return n.toLocaleString();
+    }
+
+    function refreshModeStats(data) {
+        var totals = modeTotals(data);
+        var grand = 0;
+        Object.keys(totals).forEach(function (mode) { grand += totals[mode]; });
+
+        /* sidebar */
+        Array.prototype.forEach.call(
+            document.querySelectorAll("#header ul li"), function (item) {
+                var name = item.querySelector(".name");
+                var count = item.querySelector(".count");
+                if (!name || !count) return;
+                var label = name.textContent.trim();
+                var value = label === "All major modes" ? grand : (totals[label] || 0);
+                count.textContent = number(value);
+            });
+
+        /* the Mode menu of the heat map card */
+        var select = document.getElementById("mode-select");
+        if (select) {
+            var selected = select.value;
+            var options = Array.prototype.slice.call(select.options);
+            var all = options.shift();          /* All major modes stays first */
+            all.textContent = "All major modes (" + number(grand) + ")";
+            options.forEach(function (option) {
+                option.textContent = option.value + " (" +
+                    number(totals[option.value] || 0) + ")";
+            });
+            options.sort(function (a, b) {
+                return (totals[b.value] || 0) - (totals[a.value] || 0);
+            });
+            options.forEach(function (option) { select.appendChild(option); });
+            select.insertBefore(all, select.firstChild);
+            select.value = selected;
+        }
+
+        var total = document.querySelector(".modes-total");
+        if (total) {
+            var live = Object.keys(totals).filter(function (m) {
+                return totals[m] > 0;
+            }).length;
+            total.textContent = live + " of " + realModes(counts).length +
+                " modes";
+        }
+
+        if (window.applyModeOrder) window.applyModeOrder();
+    }
+
+    function rebuildTables(data) {
+        var union = Object.create(null);
+        realModes(data).forEach(function (mode) {
+            Object.keys(data[mode]).forEach(function (command) {
+                union[command] = (union[command] || 0) + data[mode][command];
+            });
+        });
+
+        Array.prototype.forEach.call(
+            document.querySelectorAll("section[data-mode]"), function (section) {
+                var table = section.querySelector("table");
+                if (!table) return;
+                var id = section.getAttribute("data-mode");
+                var bag = id === "all" ? union : (data[id] || {});
+                var rows = Object.keys(bag).map(function (command) {
+                    return [command, bag[command]];
+                });
+                var sum = 0;
+                rows.forEach(function (row) { sum += row[1]; });
+                rows.sort(function (a, b) { return b[1] - a[1]; });
+
+                var html = rows.map(function (row) {
+                    var command = row[0];
+                    var count = row[1];
+                    var percent = sum ? (count * 100 / sum) : 0;
+                    var shortcut = (catalog[id] || {})[command];
+                    if (shortcut === undefined) {
+                        shortcut = (catalog.all || {})[command] || "";
+                    }
+                    return "<tr><td>" + number(count) + "</td><td>" +
+                        percent.toFixed(2) + "%</td><td>" +
+                        escapeHTML(command) + "</td>" +
+                        "<td data-count=\"" + count + "\">" +
+                        escapeHTML(shortcut) + "</td></tr>";
+                }).join("");
+
+                table.querySelector("tbody").innerHTML = html ||
+                    "<tr><td colspan=\"4\" class=\"empty\">no presses in this period</td></tr>";
+                sortRowsOf(table, table.dataset.sortKey || "count",
+                           parseInt(table.dataset.sortDir || "-1", 10));
+            });
     }
 
     function sortModeList() {
@@ -532,7 +676,7 @@
             return node ? node.textContent.trim() : "";
         }
 
-        function apply() {
+        var apply = function () {
             var byName = select.value === "name";
             var sorted = items.slice().sort(function (a, b) {
                 /* the aggregate row stays on top whichever order is used */
@@ -546,8 +690,9 @@
                 return cb - ca;
             });
             sorted.forEach(function (item) { list.appendChild(item); });
-        }
+        };
 
+        window.applyModeOrder = apply;
         select.addEventListener("change", apply);
     }
 
@@ -563,6 +708,7 @@
         var summary = document.getElementById("scope-summary");
         var emptyNote = document.getElementById("empty-note");
         var tip = document.getElementById("key-tip");
+        var lastPeriod = null;
 
         readTables();
         history = loadHistory();
@@ -573,6 +719,14 @@
         function render() {
             var mode = modeSelect.value;
             var period = periodSelect ? periodSelect.value : "now";
+            var data = periodModeCounts(period);
+
+            if (period !== lastPeriod) {
+                refreshModeStats(data);
+                rebuildTables(data);
+                lastPeriod = period;
+            }
+
             var bag = bagFor(mode, period);
             var stats = draw(canvas, bag, scaleSelect ? scaleSelect.value : "sqrt");
 
