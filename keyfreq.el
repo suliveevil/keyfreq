@@ -18,6 +18,16 @@
 ;; the Free Software Foundation; either version 3 of the License, or
 ;; (at your option) any later version.
 ;;
+;; Version 1.8 - 2026
+;; * Save in place: an existing entry keeps its line and only its
+;;   counter is rewritten; unknown commands are appended before the
+;;   closing parenthesis.  The file is no longer regenerated on every
+;;   save, so version control shows only the lines that really changed.
+;; * Fall back to a full rewrite only when the file cannot be parsed.
+;; * Write through a temporary file (atomic rename) and never corrupt
+;;   the in-memory table when a write fails.
+;; * Add `keyfreq-sort-file' for a one-off normalisation of the file.
+;;
 ;; Version 1.7 - 2015-09 - David Capello
 ;; * Avoid accumulating key frequency if keyfreq-file-release-lock fails
 ;;
@@ -540,79 +550,428 @@ is used as MAJOR-MODE-SYMBOL argument."
   (not (file-exists-p keyfreq-file-lock)))
 
 
+;;; ------------------------------------------------------------------
+;;; Persistence
+;;; ------------------------------------------------------------------
+
+(defcustom keyfreq-incremental-save t
+  "If non-nil, merge `keyfreq-table' into `keyfreq-file' in place.
+
+A key that is already in the file keeps its line and only the
+counter after the dot is rewritten.  A key that is not in the
+file yet is appended as a new line, right before the closing
+parenthesis of the list.  Every other byte of the file is left
+untouched, so version control shows only the lines whose counter
+really changed.
+
+If nil, or if the file cannot be read as a keyfreq list, the
+whole file is regenerated from scratch (the pre-1.8 behaviour)."
+  :group 'keyfreq
+  :type 'boolean)
+
+(defcustom keyfreq-coding-system nil
+  "Coding system used to read and write `keyfreq-file'.
+Nil means detect it from the file, which is the safe default: an
+existing file keeps its original encoding instead of being
+re-encoded behind the user's back."
+  :group 'keyfreq
+  :type '(choice (const :tag "Detect from the file" nil)
+                 coding-system))
+
+(defvar keyfreq--corrupt-backup nil
+  "Backup file created by the last `keyfreq-table-load' call, if any.")
+
+(defun keyfreq--entry-key-p (key)
+  "Return non-nil when KEY looks like a `(major-mode . command)' pair."
+  (and (consp key) (symbolp (car key)) (symbolp (cdr key))))
+
+(defun keyfreq--writable-table (table)
+  "Return a copy of TABLE keeping only the entries keyfreq wants to keep."
+  (let ((copy (make-hash-table :test 'equal
+                               :size (max 16 (hash-table-count table)))))
+    (maphash (lambda (key count)
+               (when (keyfreq--entry-key-p key)
+                 (unless (keyfreq-match-p (cdr key))
+                   (puthash key count copy))))
+             table)
+    copy))
+
+(defun keyfreq--reading-coding-system ()
+  "Coding system to read `keyfreq-file' with."
+  (or keyfreq-coding-system 'undecided))
+
+(defun keyfreq--writing-coding-system (&optional detected)
+  "Coding system to write `keyfreq-file' with.
+DETECTED is what Emacs found while reading the file; a concrete
+coding system wins so that the file keeps its original encoding."
+  (if (and detected (not (eq (coding-system-base detected) 'undecided)))
+      detected
+    (or keyfreq-coding-system 'utf-8-unix)))
+
+(defun keyfreq--file-coding-system ()
+  "Detect the coding system of an existing `keyfreq-file'."
+  (when (file-exists-p keyfreq-file)
+    (with-temp-buffer
+      (condition-case nil
+          (progn
+            (insert-file-contents keyfreq-file nil 0 65536)
+            buffer-file-coding-system)
+        (error nil)))))
+
+(defun keyfreq--counter-span (start end)
+  "Return the (BEG . END) of the counter token at the tail of START..END.
+
+Return nil when the entry is not laid out the way `prin1' writes
+it, so that the caller can fall back to a full rewrite."
+  (save-excursion
+    (goto-char end)
+    (skip-chars-backward " \t\n\r" start)
+    (when (and (> (point) start) (eq (char-before) ?\)))
+      (goto-char (1- (point)))
+      (skip-chars-backward " \t\n\r" start)
+      (let ((num-end (point)))
+        (skip-chars-backward "0-9" start)
+        (when (and (< (point) num-end)
+                   (> (point) start)
+                   (memq (char-before) '(?\s ?\t ?\n ?\r)))
+          (cons (point) num-end))))))
+
+(defun keyfreq--scan-entries ()
+  "Index the entries of the current buffer.
+
+Return a cons (INDEX . SEEN).  INDEX maps an entry key to the
+buffer span of its counter; SEEN holds every key found in the
+file, including the ones whose counter could not be located.
+
+Signal an error when the buffer is not a complete keyfreq list.
+Writing an in-place patch into a damaged file would corrupt it
+further, so the caller falls back to a full rewrite instead."
+  (let ((index (make-hash-table :test 'equal :size 512))
+        (seen (make-hash-table :test 'equal :size 512))
+        (form nil))
+    (goto-char (point-min))
+    (skip-chars-forward " \t\n\r")
+    (unless (eq (char-after) ?\()
+      (error "Keyfreq file does not start with a list"))
+    (forward-char 1)                    ; step into the outer list
+    (while (progn
+             (skip-chars-forward " \t\n\r")
+             (not (or (eobp) (eq (char-after) ?\)))))
+      (let ((start (point)))
+        (setq form (read (current-buffer)))     ; signals on damage
+        (when (and (consp form) (consp (car form)) (integerp (cdr form)))
+          (puthash (car form) t seen)
+          (when (not (gethash (car form) index))
+            (let ((span (keyfreq--counter-span start (point))))
+              (when span
+                (puthash (car form) span index)))))))
+    (skip-chars-forward " \t\n\r")
+    (unless (eq (char-after) ?\))
+      (error "Keyfreq file is not terminated by a closing parenthesis"))
+    (cons index seen)))
+
+(defun keyfreq--closing-paren-pos ()
+  "Return the position of the `)' that closes the entry list."
+  (save-excursion
+    (goto-char (point-max))
+    (skip-chars-backward " \t\n\r")
+    (when (eq (char-before) ?\))
+      (1- (point)))))
+
+(defun keyfreq--write-file (contents file &optional coding)
+  "Write CONTENTS to FILE atomically, preserving FILE's file modes."
+  (let* ((target (expand-file-name file))
+         (dir (file-name-directory target))
+         (modes (or (ignore-errors (file-modes target))
+                    (logand #o666 (default-file-modes))))
+         (coding (or coding keyfreq-coding-system 'utf-8-unix))
+         (tmp (make-temp-file (expand-file-name ".keyfreq-" dir) nil ".tmp")))
+    (unwind-protect
+        (progn
+          (let ((coding-system-for-write coding))
+            (write-region contents nil tmp nil 'nomessage))
+          (when modes (ignore-errors (set-file-modes tmp modes)))
+          (condition-case nil
+              (rename-file tmp target t)
+            ;; Windows refuses to rename onto an existing file.
+            (error
+             (let ((coding-system-for-write coding))
+               (write-region contents nil target nil 'nomessage))
+             (ignore-errors (delete-file tmp)))))
+      (when (file-exists-p tmp)
+        (ignore-errors (delete-file tmp))))))
+
+(defun keyfreq--merge-in-place (pending)
+  "Merge the deltas of PENDING into `keyfreq-file' without regenerating it.
+
+Existing counters are rewritten in place and unknown keys are
+appended as new lines.  Signals an error if the file cannot be
+patched safely; the caller then falls back to a full rewrite."
+  (let ((updates nil)
+        (additions nil)
+        (buffer (generate-new-buffer " *keyfreq-merge*" t)))
+    (unwind-protect
+        (with-current-buffer buffer
+          (let ((coding-system-for-read (keyfreq--reading-coding-system)))
+            (insert-file-contents keyfreq-file))
+          (when (zerop (buffer-size))
+            (error "Keyfreq file is empty"))
+          (let ((coding (keyfreq--writing-coding-system buffer-file-coding-system)))
+            (let* ((scan (keyfreq--scan-entries))
+                   (index (car scan))
+                   (seen (cdr scan)))
+              (maphash
+               (lambda (key count)
+                 (let ((span (gethash key index)))
+                   (cond
+                    ((null span)
+                     (if (gethash key seen)
+                         ;; The entry is in the file but its counter could
+                         ;; not be located: fall back to a full rewrite.
+                         (error "Cannot locate the counter of %S" key)
+                       (push (cons key count) additions)))
+                    (t
+                     (let* ((old (string-to-number
+                                  (buffer-substring-no-properties
+                                   (car span) (cdr span))))
+                            (new (+ old count)))
+                       (unless (= old new)
+                         (push (list (car span) (cdr span) (number-to-string new))
+                               updates)))))))
+               pending)
+              ;; Nothing to change means do not touch the file at all, so
+              ;; the mtime (and any file watcher) stays quiet.
+              (when (or updates additions)
+                ;; Rewrite counters from the end of the buffer backwards so
+                ;; that the spans taken from the index stay valid.
+                (dolist (update (sort updates (lambda (a b) (> (car a) (car b)))))
+                  (goto-char (nth 0 update))
+                  (delete-region (nth 0 update) (nth 1 update))
+                  (insert (nth 2 update)))
+                ;; Append keys that are not in the file yet, in a stable
+                ;; order, just before the closing parenthesis.
+                (when additions
+                  (setq additions
+                        (sort additions
+                              (lambda (a b)
+                                (string< (prin1-to-string (car a))
+                                         (prin1-to-string (car b))))))
+                  (goto-char (or (keyfreq--closing-paren-pos)
+                                 (error "Keyfreq file has no closing parenthesis")))
+                  (unless (or (bobp) (bolp)) (insert "\n"))
+                  (dolist (entry additions)
+                    (prin1 (cons (car entry) (cdr entry)) (current-buffer))
+                    (insert "\n")))
+                (keyfreq--write-file (buffer-string) keyfreq-file coding)))))
+      (kill-buffer buffer))))
+
+(defun keyfreq--save-full (table)
+  "Regenerate `keyfreq-file' from TABLE merged with the file on disk.
+
+TABLE itself is never modified, so a failed write can safely be
+retried without counting the file contents twice."
+  (let ((merged (copy-hash-table table)))
+    (keyfreq-table-load merged)
+    (let ((content
+           (with-temp-buffer
+             ;; `keyfreq-list' accumulates by prepending, so its `no-sort'
+             ;; output lists the entries in reverse order.  Writing that
+             ;; directly means the next save reverses the file again and
+             ;; version control sees a full rewrite on every save, so put
+             ;; the natural order back.
+             (let ((l (reverse (cdr (keyfreq-list merged 'no-sort)))))
+               (insert "(")
+               (dolist (item l)
+                 (prin1 item (current-buffer))
+                 ;; One command per line keeps the file readable.
+                 (insert "\n"))
+               (insert ")"))
+             (buffer-string))))
+      (keyfreq--write-file content keyfreq-file
+                           (keyfreq--writing-coding-system
+                            (keyfreq--file-coding-system))))))
+
+(defun keyfreq--save-locked (table)
+  "Write TABLE to `keyfreq-file', assuming this process holds the lock.
+
+Return non-nil when the data reached the disk.  TABLE is cleared
+only after a successful write, so a failed write can be retried
+without losing or duplicating counters."
+  (let ((pending (keyfreq--writable-table table))
+        (ok nil))
+    (if (zerop (hash-table-count pending))
+        ;; Everything in TABLE is filtered out, nothing to write.
+        (setq ok t)
+      (condition-case err
+          (progn
+            (if (and keyfreq-incremental-save
+                     (file-exists-p keyfreq-file)
+                     (> (file-attribute-size (file-attributes keyfreq-file)) 0))
+                (keyfreq--merge-in-place pending)
+              (keyfreq--save-full pending))
+            (setq ok t))
+        (error
+         (message "keyfreq: in-place save failed (%s); regenerating file"
+                  (error-message-string err))
+         (condition-case err
+             (progn
+               (keyfreq--save-full pending)
+               (setq ok t))
+           (error
+            (message "keyfreq: cannot save %s: %s"
+                     keyfreq-file (error-message-string err)))))))
+    (when ok
+      (clrhash table))
+    ok))
+
 (defun keyfreq-table-save (table &optional mustsave)
   "Append all values from the specified TABLE into the
 `keyfreq-file' as a sexp of an alist.  Then resets the TABLE
 if it was successfully merged.
+
+The file is updated in place: an entry that already exists keeps
+its line and only its counter is rewritten, while unknown
+entries are appended right before the closing parenthesis.  Bind
+`keyfreq-incremental-save' to nil to regenerate the whole file
+instead.
 
 If MUSTSAVE is t, this function tries to save the table until it
 gets the lock and successfully saves it.  If MUSTSAVE is nil, it
 does nothing if the table cannot be saved."
 
   ;; Avoid adding nothing to the file
-  (if (> (hash-table-count table) 0)
-    (let (done)
+  (unless (zerop (hash-table-count table))
+    (let ((done nil))
       ;; Check that the lock file doesn't exist
       (while (not done)
-	(when (keyfreq-file-is-unlocked)
-	  ;; Lock the file
-	  (keyfreq-file-claim-lock)
+        (if (not (keyfreq-file-is-unlocked))
+            ;; Somebody else is writing; retry only if we must.
+            (setq done (not mustsave))
+          ;; Lock the file
+          (keyfreq-file-claim-lock)
+          ;; Check that we have the lock
+          (if (not (eq (keyfreq-file-owner) (emacs-pid)))
+              (setq done (not mustsave))
+            (unwind-protect
+                (progn
+                  (keyfreq--save-locked table)
+                  (setq done t))
+              (keyfreq-file-release-lock))))
+        (when (and (not done) mustsave)
+          ;; We must save right now, so keep trying to get the lock.
+          (sleep-for 0.1))))))
 
-	  ;; Check that we have the lock
-	  (if (eq (keyfreq-file-owner) (emacs-pid))
-	      (unwind-protect
-		  (progn
-		    ;; Load values and merge them with the current keyfreq-table
-		    (keyfreq-table-load table)
+(defun keyfreq-sort-file (&optional filename)
+  "Rewrite FILENAME (default `keyfreq-file') with entries sorted by key.
 
-		    ;; Write the new frequencies
-		    (with-temp-file keyfreq-file
-		      (let ((l (cdr (keyfreq-list table 'no-sort))))
-			(insert "(")
-			(dolist (item l)
-			  (prin1 item (current-buffer))
-			  ;; Easy for git to track if every command is
-			  ;; one line
-			  (insert "\n"))
-			(insert ")"))))
+This is a one-off normalisation.  Sorting the file makes later
+in-place updates produce minimal, line-aligned diffs."
+  (interactive)
+  (let* ((file (expand-file-name (or filename keyfreq-file)))
+         (entries nil))
+    (unless (file-exists-p file)
+      (user-error "No such file: %s" file))
+    (with-temp-buffer
+      (let ((coding-system-for-read (or keyfreq-coding-system 'undecided)))
+        (insert-file-contents file))
+      (goto-char (point-min))
+      (skip-chars-forward " \t\n\r")
+      (when (eq (char-after) ?\() (forward-char 1))
+      (condition-case nil
+          (while (progn
+                   (skip-chars-forward " \t\n\r")
+                   (not (or (eobp) (eq (char-after) ?\)))))
+            (push (read (current-buffer)) entries))
+        (error nil)))
+    (unless entries
+      (user-error "No entries found in %s" file))
+    (let ((content
+           (with-temp-buffer
+             (insert "(")
+             (dolist (entry (sort entries
+                                  (lambda (a b)
+                                    (string< (prin1-to-string a)
+                                             (prin1-to-string b)))))
+               (prin1 entry (current-buffer))
+               (insert "\n"))
+             (insert ")")
+             (buffer-string))))
+      (if (not (keyfreq-file-is-unlocked))
+          (user-error "Keyfreq file is locked by another Emacs")
+        (keyfreq-file-claim-lock)
+        (unwind-protect
+            (progn
+              (keyfreq--write-file content file
+                                   (keyfreq--writing-coding-system
+                                    (keyfreq--file-coding-system)))
+              (message "keyfreq: sorted %d entries in %s"
+                       (length entries) file))
+          (keyfreq-file-release-lock))))))
 
-		;; Reset the hash table, enable the 'done' flag, and
-		;; release the lock.
-		(clrhash table)
-		(setq done t)
-		(keyfreq-file-release-lock))))
 
-	(if (and (not done) mustsave)
-	    ;; If we must save the file right now, we'll just keep
-	    ;; trying until we can get the lock.  So we can sleep some
-	    ;; milliseconds for the next while-loop cycle.
-	    (sleep-for 0.1)
-	  ;; If we can wait to the next timer's timeout, just enable
-	  ;; the 'done' flag to break the while-loop.
-	  (setq done t))
-
-	))))
-
+(defun keyfreq--backup-file ()
+  "Copy `keyfreq-file' aside and return the backup name."
+  (let* ((base (concat keyfreq-file ".corrupt-"
+                       (format-time-string "%Y%m%d-%H%M%S")))
+         (name base)
+         (i 1))
+    (while (file-exists-p name)
+      (setq name (format "%s-%d" base (setq i (1+ i)))))
+    (copy-file keyfreq-file name t)
+    name))
 
 (defun keyfreq-table-load (table)
   "Load all values from the `keyfreq-file' and add them in the TABLE.
-The table is not reset, so the values are appended to the table."
+The table is not reset, so the values are appended to the table.
+An empty file simply contributes nothing.
 
-  ;; Does `keyfreq-file' exist?
-  (if (file-exists-p keyfreq-file)
-      ;; Load sexp
-      (let ((l (with-temp-buffer
-		 (insert-file-contents keyfreq-file)
-		 (goto-char (point-min))
-		 (read (current-buffer)))))
-
-	;; Add the values in the table
-	(while (and (listp l) l)
-	  (if (listp (car l))
-          (unless (keyfreq-match-p (cdr (caar l)))
-            (puthash (caar l) (+ (gethash (caar l) table 0) (cdar l)) table)))
-	  (setq l (cdr l)))
-	)))
+A damaged or truncated file is never allowed to destroy the
+statistics: the original is copied to
+`keyfreq-file.corrupt-<timestamp>' first, and every entry that can
+still be read is salvaged.  `keyfreq--corrupt-backup' names the
+backup that was created, if any."
+  (setq keyfreq--corrupt-backup nil)
+  (when (file-exists-p keyfreq-file)
+    (let ((entries nil) (damaged nil))
+      (with-temp-buffer
+        (let ((coding-system-for-read (keyfreq--reading-coding-system)))
+          (insert-file-contents keyfreq-file))
+        (goto-char (point-min))
+        (skip-chars-forward " \t\n\r")
+        (cond
+         ((eobp))                       ; empty file: nothing to load
+         ((eq (char-after) ?\()         ; the expected shape
+          (forward-char 1)
+          (condition-case nil
+              (while (progn
+                       (skip-chars-forward " \t\n\r")
+                       (not (or (eobp) (eq (char-after) ?\)))))
+                (push (read (current-buffer)) entries))
+            (end-of-file nil)           ; truncated tail: keep the prefix
+            (error (setq damaged t)))
+          ;; A complete keyfreq list always ends with a parenthesis.
+          (save-excursion
+            (goto-char (point-max))
+            (skip-chars-backward " \t\n\r")
+            (unless (eq (char-before) ?\)) (setq damaged t))))
+         (t                             ; not a list at all
+          (setq damaged t)
+          (condition-case nil
+              (let ((form (read (current-buffer))))
+                (setq entries (if (listp form) form (list form))))
+            (error nil)))))
+      (setq entries (nreverse entries))   ; keep the file's original order
+      (when (and damaged (> (length entries) 0))
+        (setq keyfreq--corrupt-backup
+              (ignore-errors (keyfreq--backup-file)))
+        (message "keyfreq: %s looks damaged; kept a copy in %s and salvaged %d entries"
+                 keyfreq-file (or keyfreq--corrupt-backup "?") (length entries)))
+      (dolist (entry entries)
+        (when (and (listp entry) (consp (car entry)) (integerp (cdr entry)))
+          (unless (keyfreq-match-p (cdr (car entry)))
+            (puthash (car entry)
+                     (+ (gethash (car entry) table 0) (cdr entry))
+                     table)))))))
 
 
 ;;;###autoload
