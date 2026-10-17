@@ -578,20 +578,9 @@
     function refreshModeStats(data) {
         var totals = modeTotals(data);
         var grand = 0;
-        Object.keys(totals).forEach(function (mode) { grand += totals[mode]; });
+        realModes(data).forEach(function (mode) { grand += totals[mode]; });
 
-        /* sidebar */
-        Array.prototype.forEach.call(
-            document.querySelectorAll("#header ul li"), function (item) {
-                var name = item.querySelector(".name");
-                var count = item.querySelector(".count");
-                if (!name || !count) return;
-                var label = name.textContent.trim();
-                var value = label === "All major modes" ? grand : (totals[label] || 0);
-                count.textContent = number(value);
-            });
-
-        /* the Mode menu of the heat map card */
+        /* the Mode menu of the heat map card is the only mode picker */
         var select = document.getElementById("mode-select");
         if (select) {
             var selected = select.value;
@@ -610,90 +599,60 @@
             select.value = selected;
         }
 
-        var total = document.querySelector(".modes-total");
-        if (total) {
-            var live = Object.keys(totals).filter(function (m) {
-                return totals[m] > 0;
+        var meta = document.getElementById("modes-meta");
+        if (meta) {
+            var live = realModes(data).filter(function (mode) {
+                return totals[mode] > 0;
             }).length;
-            total.textContent = live + " of " + realModes(counts).length +
-                " modes";
+            meta.textContent = live + " of " + realModes(counts).length + " modes";
         }
-
-        if (window.applyModeOrder) window.applyModeOrder();
     }
 
-    function rebuildTables(data) {
+    var unionCache = { stamp: null, data: null };
+
+    function unionOf(data) {
+        if (unionCache.stamp === data) return unionCache.data;
         var union = Object.create(null);
         realModes(data).forEach(function (mode) {
             Object.keys(data[mode]).forEach(function (command) {
                 union[command] = (union[command] || 0) + data[mode][command];
             });
         });
-
-        Array.prototype.forEach.call(
-            document.querySelectorAll("section[data-mode]"), function (section) {
-                var table = section.querySelector("table");
-                if (!table) return;
-                var id = section.getAttribute("data-mode");
-                var bag = id === "all" ? union : (data[id] || {});
-                var rows = Object.keys(bag).map(function (command) {
-                    return [command, bag[command]];
-                });
-                var sum = 0;
-                rows.forEach(function (row) { sum += row[1]; });
-                rows.sort(function (a, b) { return b[1] - a[1]; });
-
-                var html = rows.map(function (row) {
-                    var command = row[0];
-                    var count = row[1];
-                    var percent = sum ? (count * 100 / sum) : 0;
-                    var shortcut = (catalog[id] || {})[command];
-                    if (shortcut === undefined) {
-                        shortcut = (catalog.all || {})[command] || "";
-                    }
-                    return "<tr><td>" + number(count) + "</td><td>" +
-                        percent.toFixed(2) + "%</td><td>" +
-                        escapeHTML(command) + "</td>" +
-                        "<td data-count=\"" + count + "\">" +
-                        escapeHTML(shortcut) + "</td></tr>";
-                }).join("");
-
-                table.querySelector("tbody").innerHTML = html ||
-                    "<tr><td colspan=\"4\" class=\"empty\">no presses in this period</td></tr>";
-                sortRowsOf(table, table.dataset.sortKey || "count",
-                           parseInt(table.dataset.sortDir || "-1", 10));
-            });
+        unionCache = { stamp: data, data: union };
+        return union;
     }
 
-    function sortModeList() {
-        var select = document.getElementById("mode-order");
-        var list = document.querySelector("#header ul");
-        if (!select || !list) return;
-        var items = Array.prototype.slice.call(list.children);
+    function rebuildSection(section, data) {
+        var table = section.querySelector("table");
+        if (!table) return;
+        var id = section.getAttribute("data-mode");
+        var bag = id === "all" ? unionOf(data) : (data[id] || {});
+        var rows = Object.keys(bag).map(function (command) {
+            return [command, bag[command]];
+        });
+        var sum = 0;
+        rows.forEach(function (row) { sum += row[1]; });
+        rows.sort(function (a, b) { return b[1] - a[1]; });
 
-        function text(item, selector) {
-            var node = item.querySelector(selector);
-            return node ? node.textContent.trim() : "";
-        }
+        var html = rows.map(function (row) {
+            var command = row[0];
+            var count = row[1];
+            var percent = sum ? (count * 100 / sum) : 0;
+            var shortcut = (catalog[id] || {})[command];
+            if (shortcut === undefined) {
+                shortcut = (catalog.all || {})[command] || "";
+            }
+            return "<tr><td>" + number(count) + "</td><td>" +
+                percent.toFixed(2) + "%</td><td>" +
+                escapeHTML(command) + "</td>" +
+                "<td data-count=\"" + count + "\">" +
+                escapeHTML(shortcut) + "</td></tr>";
+        }).join("");
 
-        var apply = function () {
-            var byName = select.value === "name";
-            var sorted = items.slice().sort(function (a, b) {
-                /* the aggregate row stays on top whichever order is used */
-                var aa = text(a, ".name");
-                var bb = text(b, ".name");
-                if (aa === "All major modes") return -1;
-                if (bb === "All major modes") return 1;
-                if (byName) return compareValues(aa, bb);
-                var ca = parseInt(text(a, ".count").replace(/[^0-9]/g, ""), 10) || 0;
-                var cb = parseInt(text(b, ".count").replace(/[^0-9]/g, ""), 10) || 0;
-                return cb - ca;
-            });
-            sorted.forEach(function (item) { list.appendChild(item); });
-        };
-
-        window.applyModeOrder = apply;
-        select.addEventListener("change", apply);
+        table.querySelector("tbody").innerHTML = html ||
+            "<tr><td colspan=\"4\" class=\"empty\">no presses in this period</td></tr>";
+        sortRowsOf(table, table.dataset.sortKey || "count",
+                   parseInt(table.dataset.sortDir || "-1", 10));
     }
 
     /* ---------- wiring ---------- */
@@ -710,21 +669,46 @@
         var tip = document.getElementById("key-tip");
         var lastPeriod = null;
 
+        var allSections = [];
+        var sectionsById = Object.create(null);
+        var data = null;
+
         readTables();
         history = loadHistory();
-        Array.prototype.forEach.call(document.querySelectorAll("section table"),
-                                     makeSortable);
-        sortModeList();
+        Array.prototype.forEach.call(document.querySelectorAll("section[data-mode]"),
+                                     function (section) {
+                                         allSections.push(section);
+                                         sectionsById[section.getAttribute("data-mode")] =
+                                             section;
+                                         var table = section.querySelector("table");
+                                         if (table) makeSortable(table);
+                                     });
+
+
+        function showSection(mode) {
+            Array.prototype.forEach.call(allSections, function (section) {
+                section.hidden = section.getAttribute("data-mode") !== mode;
+            });
+        }
 
         function render() {
             var mode = modeSelect.value;
             var period = periodSelect ? periodSelect.value : "now";
-            var data = periodModeCounts(period);
 
             if (period !== lastPeriod) {
+                data = periodModeCounts(period);
                 refreshModeStats(data);
-                rebuildTables(data);
+                Array.prototype.forEach.call(allSections, function (section) {
+                    section.dataset.built = "";
+                });
                 lastPeriod = period;
+            }
+
+            showSection(mode);
+            var section = sectionsById[mode] || sectionsById.all;
+            if (section && section.dataset.built !== "1") {
+                rebuildSection(section, data);
+                section.dataset.built = "1";
             }
 
             var bag = bagFor(mode, period);

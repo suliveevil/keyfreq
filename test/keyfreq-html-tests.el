@@ -189,11 +189,12 @@
                         html)))
              (kfh-ok "the default order is marked as descending"
                      (string-match-p "aria-sort=\"descending\"" html))
-             (kfh-ok "the mode list has its own order menu"
-                     (string-match-p "id=\"mode-order\"" html))
-             (kfh-ok "the mode list offers both orders"
-                     (and (string-match-p "<option value=\"count\" selected>" html)
-                          (string-match-p "<option value=\"name\">" html))))
+             (kfh-ok "the Mode menu is the only mode picker"
+                     (and (string-match-p "id=\"mode-select\"" html)
+                          (not (string-match-p "id=\"mode-order\"" html))))
+             (kfh-ok "the all view and the mode view both exist"
+                     (and (string-match-p "data-mode=\"all\"" html)
+                          (string-match-p "data-mode=\"org-mode\"" html))))
            (delete-file log) (delete-file out)))
 
 (kfh-test "no git history means no period menu and no data blob"
@@ -236,7 +237,8 @@
            (let* ((html (kfh-slurp out))
                   (ids (kfh-ids html))
                   (hrefs (kfh-hrefs html)))
-             (kfh-ok "there are anchors" (> (length hrefs) 0))
+             (kfh-ok "the document is a single column, no mode sidebar"
+                     (not (string-match-p "<nav class=\"header\"" html)))
              (kfh-ok "every href has a matching id"
                      (cl-every (lambda (h) (member h ids)) hrefs))
              (kfh-ok "ids are unique"
@@ -252,8 +254,8 @@
            (let ((html (kfh-slurp out)))
              (kfh-ok "the section keeps the real name in data-mode"
                      (string-match-p "data-mode=\"benchmark-init/tree-mode\"" html))
-             (kfh-ok "the anchor id is selector-safe"
-                     (string-match-p "id=\"benchmark-init-tree-mode\"" html))
+             (kfh-ok "no heading carries an unsafe id"
+                     (not (string-match-p "id=\"benchmark-init/tree-mode\"" html)))
              (kfh-ok "no raw id with a slash"
                      (not (string-match-p "id=\"benchmark-init/tree-mode\"" html))))
            (delete-file log) (delete-file out)))

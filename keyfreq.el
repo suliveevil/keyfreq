@@ -850,6 +850,7 @@ single canvas plus the controls that choose what it shows."
     (insert "<option value=\"now\" selected>All time</option>")
     (insert "</select></label>\n"))
   (insert "<span class=\"scope\" id=\"scope-summary\"></span>\n")
+  (insert "<span class=\"modes-total\" id=\"modes-meta\"></span>\n")
   (insert "</div>\n</div>\n")
   (insert "<div class=\"heatmap-wrap\">\n")
   (insert "<canvas id=\"heatmap\" width=\"900\" height=\"340\"></canvas>\n")
@@ -930,22 +931,7 @@ Interactively, use a prefix argument to choose FILENAME."
           (insert "<style>\n")
           (keyfreq--html-insert-asset "style.css")
           (insert "\n</style>\n</head>\n<body>\n")
-          (insert "<nav class=\"header\" id=\"header\">\n")
-          (insert "<div class=\"nav-sort\"><label>Sort <select id=\"mode-order\">"
-                  "<option value=\"count\" selected>by presses</option>"
-                  "<option value=\"name\">by name</option>"
-                  "</select></label><span class=\"modes-total\">"
-                  (format "%d modes" (length modes))
-                  "</span></div>\n")
-          (insert "<ul>\n")
-          (insert (format "<li><a href=\"#anchor-all\"><span class=\"name\">All major modes</span><span class=\"count\">%s</span></a></li>\n"
-                          (keyfreq--html-number total)))
-          (dolist (entry modes)
-            (insert (format "<li><a href=\"#%s\"><span class=\"name\">%s</span><span class=\"count\">%s</span></a></li>\n"
-                            (gethash (car entry) ids)
-                            (keyfreq--html-escape (car entry))
-                            (keyfreq--html-number (cdr entry)))))
-          (insert "</ul>\n</nav>\n<main class=\"content\">\n")
+          (insert "<main class=\"content\">\n")
           (insert "<h1>Keyfreq Report</h1>\n")
           (insert (format "<p class=\"summary\">%s mode/command pairs &middot; %d modes &middot; %s invocations &middot; generated %s</p>\n"
                           (keyfreq--html-number (hash-table-count table))
@@ -964,9 +950,7 @@ Interactively, use a prefix argument to choose FILENAME."
                    (keys (gethash mode per-mode)))
               (insert (format "<section data-mode=\"%s\">\n"
                               (keyfreq--html-escape (symbol-name mode))))
-              (insert (format "<h2 id=\"%s\">%s</h2>\n"
-                              (gethash mode ids)
-                              (keyfreq--html-escape mode)))
+              (insert (format "<h2>%s</h2>\n" (keyfreq--html-escape mode)))
               (insert (funcall cell
                                (keyfreq-list (keyfreq-filter-major-mode table mode))
                                (lambda (command)

@@ -14,60 +14,12 @@ body {
     background: #fff;
 }
 
-/* ---------- sidebar ---------- */
-
-.header {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 20%;
-    min-width: 180px;
-    height: 100%;
-    overflow-y: auto;
-    overflow-x: hidden;
-    padding: 88px 0 24px 0;
-    border-right: 2px solid #ddd;
-    background: #fafafa;
-}
-
-.header ul {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-}
-
-.header li {
-    margin: 0;
-    line-height: 1.2;
-}
-
-.header a {
-    display: flex;
-    justify-content: space-between;
-    gap: 8px;
-    padding: 6px 12px;
-    text-decoration: none;
-    color: #444;
-    font-size: 14px;
-    word-break: break-word;
-}
-
-.header a:hover,
-.header a:focus-visible {
-    background: #e8e8e8;
-    color: #b00000;
-}
-
-.header .count {
-    color: #999;
-    font-variant-numeric: tabular-nums;
-    flex: none;
-}
-
 /* ---------- content ---------- */
 
 .content {
-    margin-left: 20%;
+    /* one table at a time, so the page is a single column now */
+    max-width: 1180px;
+    margin: 0 auto;
     /* clear the 60px fixed skip bar plus breathing room */
     padding: 88px 32px 64px 32px;
 }
@@ -254,34 +206,9 @@ canvas[hidden] {
 /* ---------- narrow screens ---------- */
 
 @media (max-width: 900px) {
-    .header {
-        position: static;
-        width: auto;
-        min-width: 0;
-        height: auto;
-        max-height: 25vh;
-        padding: 12px 0;
-        border-right: none;
-        border-bottom: 2px solid #ddd;
-    }
 
-    .header ul {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 4px;
-        padding: 0 12px;
-    }
 
-    .header a {
-        padding: 4px 8px;
-        font-size: 13px;
-        border: 1px solid #ddd;
-        border-radius: 4px;
-    }
 
-    .header .count {
-        display: none;
-    }
 
     .content {
         margin-left: 0;
@@ -322,7 +249,6 @@ canvas[hidden] {
 /* ---------- print ---------- */
 
 @media print {
-    .header,
     .skipbar {
         display: none;
     }
@@ -445,20 +371,7 @@ canvas[hidden] {
         color: #e8e8ea;
     }
 
-    .header {
-        background: #1b1b1e;
-        border-color: #333;
-    }
 
-    .header a {
-        color: #c8c8cc;
-    }
-
-    .header a:hover,
-    .header a:focus-visible {
-        background: #2a2a2e;
-        color: #ff6b6b;
-    }
 
     .card {
         background: #1c1c1f;
@@ -497,12 +410,6 @@ canvas[hidden] {
 }
 
 /* keep long mode names on one line in the sidebar */
-.header a .name {
-    min-width: 0;
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-}
 
 /* ---------- sortable columns ---------- */
 
@@ -537,36 +444,6 @@ th[aria-sort="descending"] button.sort::after {
     font-size: .78em;
 }
 
-.nav-sort {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    padding: 10px 12px 4px 12px;
-    color: #777;
-    font-size: 12px;
-}
-
-.nav-sort label {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-}
-
-.nav-sort select {
-    padding: 2px 4px;
-    border: 1px solid #d0d0d4;
-    border-radius: 5px;
-    background: #fff;
-    font: inherit;
-    font-size: 12px;
-}
-
-.nav-sort .modes-total {
-    color: #999;
-    font-variant-numeric: tabular-nums;
-}
-
 @media (prefers-color-scheme: dark) {
     th button.sort:hover {
         color: #ff6b6b;
@@ -581,4 +458,9 @@ th[aria-sort="descending"] button.sort::after {
         border-color: #44444b;
         color: #e8e8ea;
     }
+}
+
+/* only the selected mode's table is shown */
+section[hidden] {
+    display: none;
 }
