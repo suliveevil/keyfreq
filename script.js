@@ -459,6 +459,96 @@
         }
     }
 
+    /* ---------- sorting ---------- */
+
+    function sortValue(row, key) {
+        switch (key) {
+        case "count":
+            return parseInt(row.children[3].getAttribute("data-count"), 10) || 0;
+        case "percent":
+            return parseFloat(row.children[1].textContent) || 0;
+        case "shortcut":
+            return row.children[3].textContent.trim();
+        default:
+            return row.children[2].textContent.trim();
+        }
+    }
+
+    function compareValues(a, b) {
+        if (typeof a === "number" && typeof b === "number") return a - b;
+        return String(a).localeCompare(String(b), undefined,
+                                       {numeric: true, sensitivity: "base"});
+    }
+
+    function makeSortable(table) {
+        var tbody = table.querySelector("tbody");
+        var buttons = table.querySelectorAll("th button.sort");
+        var key = "count";
+        var direction = -1;             /* tables start sorted by presses */
+
+        Array.prototype.forEach.call(buttons, function (button) {
+            button.addEventListener("click", function () {
+                var next = button.getAttribute("data-sort");
+                if (next === key) {
+                    direction = -direction;
+                } else {
+                    key = next;
+                    /* numbers read best biggest-first, names A-to-Z */
+                    direction = (key === "count" || key === "percent") ? -1 : 1;
+                }
+                var rows = Array.prototype.slice.call(tbody.rows);
+                rows.sort(function (a, b) {
+                    var x = sortValue(a, key);
+                    var y = sortValue(b, key);
+                    /* commands with no key binding stay at the bottom */
+                    if (key === "shortcut") {
+                        if (!x && y) return 1;
+                        if (x && !y) return -1;
+                    }
+                    return compareValues(x, y) * direction;
+                });
+                rows.forEach(function (row) { tbody.appendChild(row); });
+
+                Array.prototype.forEach.call(table.querySelectorAll("th"),
+                                             function (th) {
+                                                 th.removeAttribute("aria-sort");
+                                             });
+                button.parentNode.setAttribute(
+                    "aria-sort", direction > 0 ? "ascending" : "descending");
+            });
+        });
+    }
+
+    function sortModeList() {
+        var select = document.getElementById("mode-order");
+        var list = document.querySelector("#header ul");
+        if (!select || !list) return;
+        var items = Array.prototype.slice.call(list.children);
+
+        function text(item, selector) {
+            var node = item.querySelector(selector);
+            return node ? node.textContent.trim() : "";
+        }
+
+        function apply() {
+            var byName = select.value === "name";
+            var sorted = items.slice().sort(function (a, b) {
+                /* the aggregate row stays on top whichever order is used */
+                var aa = text(a, ".name");
+                var bb = text(b, ".name");
+                if (aa === "All major modes") return -1;
+                if (bb === "All major modes") return 1;
+                if (byName) return compareValues(aa, bb);
+                var ca = parseInt(text(a, ".count").replace(/[^0-9]/g, ""), 10) || 0;
+                var cb = parseInt(text(b, ".count").replace(/[^0-9]/g, ""), 10) || 0;
+                return cb - ca;
+            });
+            sorted.forEach(function (item) { list.appendChild(item); });
+        }
+
+        select.addEventListener("change", apply);
+    }
+
     /* ---------- wiring ---------- */
 
     function boot() {
@@ -474,6 +564,9 @@
 
         readTables();
         history = loadHistory();
+        Array.prototype.forEach.call(document.querySelectorAll("section table"),
+                                     makeSortable);
+        sortModeList();
 
         function render() {
             var mode = modeSelect.value;

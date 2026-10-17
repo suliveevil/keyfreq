@@ -503,3 +503,82 @@ canvas[hidden] {
     white-space: nowrap;
     text-overflow: ellipsis;
 }
+
+/* ---------- sortable columns ---------- */
+
+th button.sort {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: inherit;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+th button.sort:hover {
+    color: #cb0000;
+}
+
+th button.sort:focus-visible {
+    border-radius: 3px;
+    outline: 2px solid #cb0000;
+    outline-offset: 2px;
+}
+
+th[aria-sort="ascending"] button.sort::after {
+    content: " \25B2";
+    font-size: .78em;
+}
+
+th[aria-sort="descending"] button.sort::after {
+    content: " \25BC";
+    font-size: .78em;
+}
+
+.nav-sort {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 10px 12px 4px 12px;
+    color: #777;
+    font-size: 12px;
+}
+
+.nav-sort label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.nav-sort select {
+    padding: 2px 4px;
+    border: 1px solid #d0d0d4;
+    border-radius: 5px;
+    background: #fff;
+    font: inherit;
+    font-size: 12px;
+}
+
+.nav-sort .modes-total {
+    color: #999;
+    font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-color-scheme: dark) {
+    th button.sort:hover {
+        color: #ff6b6b;
+    }
+
+    th button.sort:focus-visible {
+        outline-color: #ff6b6b;
+    }
+
+    .nav-sort select {
+        background: #26262a;
+        border-color: #44444b;
+        color: #e8e8ea;
+    }
+}

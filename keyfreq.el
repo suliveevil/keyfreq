@@ -789,8 +789,15 @@ keystroke description."
   (insert "<table>\n")
   (insert "<colgroup><col style=\"width:10%\"><col style=\"width:9%\">"
           "<col><col style=\"width:42%\"></colgroup>\n")
-  (insert "<thead><tr><th scope=\"col\">Times</th><th scope=\"col\">%</th>"
-          "<th scope=\"col\">Command</th><th scope=\"col\">Shortcut</th>"
+  (insert "<thead><tr>"
+          "<th scope=\"col\" aria-sort=\"descending\">"
+          "<button type=\"button\" class=\"sort\" data-sort=\"count\">Times</button></th>"
+          "<th scope=\"col\">"
+          "<button type=\"button\" class=\"sort\" data-sort=\"percent\">%</button></th>"
+          "<th scope=\"col\">"
+          "<button type=\"button\" class=\"sort\" data-sort=\"command\">Command</button></th>"
+          "<th scope=\"col\">"
+          "<button type=\"button\" class=\"sort\" data-sort=\"shortcut\">Shortcut</button></th>"
           "</tr></thead>\n<tbody>\n")
   ;; Keep the rows terse: cells are styled by position, and the counter is
   ;; carried by `data-count' so the renderer does not have to parse the
@@ -924,7 +931,14 @@ Interactively, use a prefix argument to choose FILENAME."
           (insert "<style>\n")
           (keyfreq--html-insert-asset "style.css")
           (insert "\n</style>\n</head>\n<body>\n")
-          (insert "<nav class=\"header\" id=\"header\">\n<ul>\n")
+          (insert "<nav class=\"header\" id=\"header\">\n")
+          (insert "<div class=\"nav-sort\"><label>Sort <select id=\"mode-order\">"
+                  "<option value=\"count\" selected>by presses</option>"
+                  "<option value=\"name\">by name</option>"
+                  "</select></label><span class=\"modes-total\">"
+                  (format "%d modes" (length modes))
+                  "</span></div>\n")
+          (insert "<ul>\n")
           (insert (format "<li><a href=\"#anchor-all\"><span class=\"name\">All major modes</span><span class=\"count\">%s</span></a></li>\n"
                           (keyfreq--html-number total)))
           (dolist (entry modes)

@@ -175,6 +175,27 @@
                      (not (string-match-p "<canvas></canvas>" html))))
            (delete-file log) (delete-file out)))
 
+(kfh-test "tables are sortable by command, shortcut and count"
+         (let* ((log (kfh-fixture '(((org-mode . next-line) . 7)
+                                    ((org-mode . save-buffer) . 2))))
+                (keyfreq-file log)
+                (out (expand-file-name "sortable.html" kfh-tmp)))
+           (keyfreq-html-v2 out nil)
+           (let ((html (kfh-slurp out)))
+             (dolist (key '("count" "percent" "command" "shortcut"))
+               (kfh-ok (format "the %s column has a sort button" key)
+                       (string-match-p
+                        (format "class=\"sort\" data-sort=\"%s\"" key)
+                        html)))
+             (kfh-ok "the default order is marked as descending"
+                     (string-match-p "aria-sort=\"descending\"" html))
+             (kfh-ok "the mode list has its own order menu"
+                     (string-match-p "id=\"mode-order\"" html))
+             (kfh-ok "the mode list offers both orders"
+                     (and (string-match-p "<option value=\"count\" selected>" html)
+                          (string-match-p "<option value=\"name\">" html))))
+           (delete-file log) (delete-file out)))
+
 (kfh-test "no git history means no period menu and no data blob"
          (let* ((log (kfh-fixture '(((org-mode . next-line) . 3))))
                 (keyfreq-file log)
