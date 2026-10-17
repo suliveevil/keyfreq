@@ -81,6 +81,46 @@
                    (not (equal (keyfreq--html-id "a/b-mode" used)
                                (keyfreq--html-id "a-b-mode" used))))))
 
+(kfh-test "shortcuts are resolved in the mode's own keymap"
+         (require 'dired)
+         (kfh-ok "a mode map is found by the <mode>-map convention"
+                 (keymapp (keyfreq--mode-keymap 'dired-mode)))
+         (kfh-ok "a mode without a map falls back to global-map"
+                 (equal (list global-map)
+                        (keyfreq--mode-keymaps 'no-such-mode)))
+         (kfh-ok "dired-toggle-marks is invisible globally"
+                 (equal "" (keyfreq--where-is-string 'dired-toggle-marks nil)))
+         (kfh-ok "but visible in dired-mode"
+                 (string-match-p
+                  "\\`t"
+                  (keyfreq--where-is-string
+                   'dired-toggle-marks (keyfreq--mode-keymap 'dired-mode))))
+         (kfh-ok "org-return is RET in org-mode"
+                 (progn (require 'org)
+                        (string-match-p
+                         "\\`RET"
+                         (keyfreq--where-is-string
+                          'org-return (keyfreq--mode-keymap 'org-mode))))))
+
+(kfh-test "pseudo bindings and unprintable keys never reach the report"
+         (kfh-ok "menu-bar paths are stripped"
+                 (not (string-match-p "menu-bar" (keyfreq--where-is-string 'save-buffer nil))))
+         (kfh-ok "the undefined command has no shortcut"
+                 (equal "" (keyfreq--where-is-string 'undefined nil)))
+         (let* ((log (kfh-fixture '(((dired-mode . dired-toggle-marks) . 9))))
+                (keyfreq-file log)
+               (out (expand-file-name "pseudo.html" kfh-tmp)))
+           (require 'dired)
+           (keyfreq-html-v2 out nil)
+           (let ((html (kfh-slurp out)))
+             (kfh-ok "the report is plain UTF-8 text"
+                     (equal html (decode-coding-string (encode-coding-string html 'utf-8) 'utf-8)))
+             (kfh-ok "no menu-bar noise in shortcut cells"
+                     (not (string-match-p "data-count=\"9\">[^<]*menu-bar" html)))
+             (kfh-ok "the mode-local binding made it in"
+                     (string-match-p "data-count=\"9\">t" html)))
+           (delete-file log) (delete-file out)))
+
 (kfh-test "report is a well formed, self-contained document"
          (let* ((log (kfh-fixture '(((fundamental-mode . next-line) . 57708)
                                     ((fundamental-mode . save-buffer) . 3200)

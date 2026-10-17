@@ -126,6 +126,26 @@
             .filter(function (s) { return s.length > 0; });
     }
 
+    /* menu-bar / tool-bar / mouse paths are not keystrokes. */
+    var PSEUDO = /<[^>]*(menu-bar|tool-bar|tab-bar|mode-line|scroll-bar|divider|vertical-line)/i;
+
+    function isPseudo(binding) {
+        return PSEUDO.test(binding) || /mouse|wheel/i.test(binding);
+    }
+
+    /* keyfreq counts commands, not keys.  A command usually has several
+       bindings (next-line is both C-n and <down>), so crediting every one
+       of them would multiply the counts.  Only the first binding that is
+       a real keystroke is taken as the representative one. */
+    function firstBinding(text) {
+        var parts = String(text || "").split(",");
+        for (var i = 0; i < parts.length; i++) {
+            var part = parts[i].trim();
+            if (part && !isPseudo(part)) return part;
+        }
+        return null;
+    }
+
     /* "C-x C-s" -> ["C","x","C","s"];  "<down-mouse-1>" is skipped. */
     function shortcutKeys(binding) {
         if (/mouse/i.test(binding)) return [];
@@ -145,17 +165,16 @@
         for (var i = 0; i < cells.length; i++) {
             var count = parseInt(cells[i].getAttribute("data-count"), 10);
             if (!count) continue;
-            var bindings = splitShortcut(cells[i].textContent);
+            var binding = firstBinding(cells[i].textContent);
+            if (!binding) continue;
+            var keys = shortcutKeys(binding);
             var counted = Object.create(null);
-            for (var j = 0; j < bindings.length; j++) {
-                var keys = shortcutKeys(bindings[j]);
-                for (var k = 0; k < keys.length; k++) {
-                    var key = keys[k];
-                    if (skip.indexOf(key) >= 0) continue;
-                    if (counted[key]) continue;   // once per command
-                    counted[key] = true;
-                    freq[key] = (freq[key] || 0) + count;
-                }
+            for (var k = 0; k < keys.length; k++) {
+                var key = keys[k];
+                if (skip.indexOf(key) >= 0) continue;
+                if (counted[key]) continue;       // once per command
+                counted[key] = true;
+                freq[key] = (freq[key] || 0) + count;
             }
         }
         return freq;

@@ -269,10 +269,36 @@ called, percentage usage and the command."
       (t (lambda (e) (funcall func (cdr e) (/ (* 1e2 (cdr e)) sum) (car e)))))
      (cdr list) "")))
 
-(defun keyfreq-where-is (command)
+(defun keyfreq-where-is (command &optional keymaps)
+  "Return the keys COMMAND is bound to, as a comma separated string.
+
+KEYMAPS defaults to the global keymap.  To also see a mode's own
+bindings pass its keymap, e.g.
+
+  (keyfreq-where-is 'org-return (keyfreq--mode-keymap 'org-mode))
+
+Since Emacs 30 `where-is-internal' takes (DEFINITION KEYMAP FIRSTONLY
+NOINDIRECT); a non-nil KEYMAP means `search this keymap and the global
+keymap'."
   (mapconcat 'key-description
-             (where-is-internal command)
+             (where-is-internal command (or keymaps (list global-map)))
              ", "))
+
+(defun keyfreq--mode-keymap (major-mode)
+  "Return MAJOR-MODE's own keymap when it follows the `<mode>-map' convention."
+  (let ((symbol (intern (concat (symbol-name major-mode) "-map"))))
+    (and (boundp symbol)
+         (keymapp (symbol-value symbol))
+         (symbol-value symbol))))
+
+(defun keyfreq--mode-keymaps (major-mode)
+  "Return the keymap to resolve MAJOR-MODE's bindings in.
+
+Major modes bind most of their commands in their own keymap rather than
+in `global-map'; resolving against `global-map' alone silently drops
+them (for `org-mode' that was 42% of all key presses).  Falls back to
+`global-map' when the mode has no `<mode>-map'."
+  (or (keyfreq--mode-keymap major-mode) (list global-map)))
 
 (defun keyfreq-show (&optional major-mode-symbol)
   "Show command usage statistics in `keyfreq-buffer'.
@@ -382,6 +408,85 @@ Inlining turns the report into a single self-contained file."
                 (string< (symbol-name (car a)) (symbol-name (car b)))
               (> (cdr a) (cdr b)))))))
 
+(defun keyfreq--pseudo-binding-p (sequence)
+  "Return non-nil when SEQUENCE is a menu-bar/tool-bar style binding.
+Those are not keystrokes, and they add noise to the Shortcut column."
+  (string-match-p
+   "\\`<\\(menu-bar\\|tool-bar\\|tab-bar\\|mode-line\\|vertical-line\\|right-divider\\|bottom-divider\\|vertical-scroll-bar\\|horizontal-scroll-bar\\)>"
+   (key-description sequence)))
+
+(defun keyfreq--html-printable (string)
+  "Return STRING with every non-printing character replaced by ?.
+
+`key-description' can emit raw bytes (for example for the pseudo key
+ranges bound to `undefined'); those are not valid HTML text and cannot
+be encoded as UTF-8."
+  (replace-regexp-in-string "[^[:print:]]" "?" string))
+
+(defun keyfreq--where-is-string (command keymaps)
+  "Return COMMAND's keys resolved in KEYMAPS, HTML-escaped.
+
+Pseudo bindings (menu-bar, tool-bar, ...) and unprintable key ranges
+are left out; the result is always valid UTF-8 text."
+  (if (eq command 'undefined)
+      ""
+    (keyfreq--html-escape
+     (mapconcat (lambda (sequence)
+                  (keyfreq--html-printable (key-description sequence)))
+                (cl-remove-if
+                 (lambda (sequence)
+                   (or (keyfreq--pseudo-binding-p sequence)
+                       ;; a "80..255"-style range is a character class,
+                       ;; not something one presses
+                       (string-match-p "\\.\\." (key-description sequence))))
+                 (where-is-internal command (or keymaps (list global-map))))
+                ", "))))
+
+(defun keyfreq--html-shortcut-index (table modes)
+  "Resolve every mode/command pair in TABLE to its keystrokes.
+
+MODES is the value of `keyfreq--html-modes'.
+
+Return (PER-MODE . UNION).  PER-MODE maps a major mode to a hash table
+of COMMAND -> escaped keystroke string resolved in that mode's own
+keymap.  UNION maps COMMAND -> every binding seen in any mode, which is
+what the \"All major modes\" table shows."
+  (let ((per-mode (make-hash-table :test 'eq))
+        (all (make-hash-table :test 'eq))
+        (global-cache (make-hash-table :test 'eq)))
+    (dolist (cell modes)
+      (let* ((mode (car cell))
+             (map (keyfreq--mode-keymap mode))
+             (index (make-hash-table :test 'eq))
+             (commands nil))
+        (maphash (lambda (key _count)
+                   (when (eq (car-safe key) mode)
+                     (push (cdr key) commands)))
+                 table)
+        (dolist (command commands)
+          (let ((text (if map
+                          (keyfreq--where-is-string command map)
+                        (or (gethash command global-cache)
+                            (puthash command
+                                     (keyfreq--where-is-string command nil)
+                                     global-cache)))))
+            (puthash command text index)
+            (when (not (string-empty-p text))
+              (puthash command (append (gethash command all) (list text)) all))))
+        (puthash mode index per-mode)))
+    (maphash (lambda (command parts)
+               (puthash command
+                        (mapconcat #'identity
+                                   (delete-dups
+                                    (apply #'append
+                                           (mapcar (lambda (s)
+                                                     (split-string s ",\\s-*" t))
+                                                   parts)))
+                                   ", ")
+                        all))
+             all)
+    (cons per-mode all)))
+
 (defun keyfreq--html-insert-table (list shortcut)
   "Insert an HTML table for LIST, a value returned by `keyfreq-list'.
 SHORTCUT is a function that maps a command to its already escaped
@@ -427,9 +532,10 @@ keystroke description."
            (used (make-hash-table :test 'equal))
            (ids (make-hash-table :test 'eq))
            (total (car (keyfreq-list table 'no-sort)))
-           (shortcut (lambda (command)
-                       (keyfreq--html-escape (keyfreq-where-is command))))
-           (cell (lambda (list)
+           (index (keyfreq--html-shortcut-index table modes))
+           (per-mode (car index))
+           (all-keys (cdr index))
+           (cell (lambda (list shortcut)
                    (with-temp-buffer
                      (keyfreq--html-insert-table list shortcut)
                      (buffer-string)))))
@@ -437,8 +543,10 @@ keystroke description."
         (puthash (car entry)
                  (keyfreq--html-id (symbol-name (car entry)) used)
                  ids))
-      (with-temp-file filename
-        (let ((coding-system-for-write 'utf-8-unix))
+      ;; bind the coding system around the whole writer: `with-temp-file'
+      ;; writes *after* its body, so a `let' inside would be too late.
+      (let ((coding-system-for-write 'utf-8-unix))
+        (with-temp-file filename
           (insert "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n")
           (insert "<meta charset=\"utf-8\">\n")
           (insert "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
@@ -465,10 +573,13 @@ keystroke description."
           (insert "<section data-mode=\"all\">\n")
           (insert "<h2 id=\"anchor-all\">All major modes</h2>\n")
           (insert "<canvas></canvas>\n")
-          (insert (funcall cell (keyfreq-list (keyfreq-groups-major-modes table))))
+          (insert (funcall cell
+                           (keyfreq-list (keyfreq-groups-major-modes table))
+                           (lambda (command) (or (gethash command all-keys) ""))))
           (insert "</section>\n")
           (dolist (entry modes)
-            (let ((mode (car entry)))
+            (let* ((mode (car entry))
+                   (keys (gethash mode per-mode)))
               (insert (format "<section data-mode=\"%s\">\n"
                               (keyfreq--html-escape (symbol-name mode))))
               (insert (format "<h2 id=\"%s\">%s</h2>\n"
@@ -476,7 +587,9 @@ keystroke description."
                               (keyfreq--html-escape mode)))
               (insert "<canvas></canvas>\n")
               (insert (funcall cell
-                               (keyfreq-list (keyfreq-filter-major-mode table mode))))
+                               (keyfreq-list (keyfreq-filter-major-mode table mode))
+                               (lambda (command)
+                                 (or (gethash command keys) ""))))
               (insert "</section>\n")))
           (insert "</main>\n<script>\n")
           (keyfreq--html-insert-asset "script.js")
@@ -505,19 +618,15 @@ Interactively, use a prefix argument to choose FILENAME."
            (used (make-hash-table :test 'equal))
            (ids (make-hash-table :test 'eq))
            (total (car (keyfreq-list table 'no-sort)))
-           (shortcuts (make-hash-table :test 'eq))
+           (index (keyfreq--html-shortcut-index table modes))
+           (per-mode (car index))
+           (all-keys (cdr index))
            (file (or filename
                      (make-temp-file
                       (expand-file-name "keyfreq-" temporary-file-directory)
                       nil ".html")))
-           (shortcut
-            (lambda (command)
-              (or (gethash command shortcuts)
-                  (puthash command
-                           (keyfreq--html-escape (keyfreq-where-is command))
-                           shortcuts))))
            (cell
-            (lambda (list)
+            (lambda (list shortcut)
               (with-temp-buffer
                 (keyfreq--html-insert-table list shortcut)
                 (buffer-string)))))
@@ -525,8 +634,10 @@ Interactively, use a prefix argument to choose FILENAME."
         (puthash (car entry)
                  (keyfreq--html-id (symbol-name (car entry)) used)
                  ids))
-      (with-temp-file file
-        (let ((coding-system-for-write 'utf-8-unix))
+      ;; bind the coding system around the whole writer: `with-temp-file'
+      ;; writes *after* its body, so a `let' inside would be too late.
+      (let ((coding-system-for-write 'utf-8-unix))
+        (with-temp-file file
           (insert "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n")
           (insert "<meta charset=\"utf-8\">\n")
           (insert "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
@@ -554,10 +665,13 @@ Interactively, use a prefix argument to choose FILENAME."
           (insert "<section data-mode=\"all\">\n")
           (insert "<h2 id=\"anchor-all\">All major modes</h2>\n")
           (insert "<canvas></canvas>\n")
-          (insert (funcall cell (keyfreq-list (keyfreq-groups-major-modes table))))
+          (insert (funcall cell
+                           (keyfreq-list (keyfreq-groups-major-modes table))
+                           (lambda (command) (or (gethash command all-keys) ""))))
           (insert "</section>\n")
           (dolist (entry modes)
-            (let ((mode (car entry)))
+            (let* ((mode (car entry))
+                   (keys (gethash mode per-mode)))
               (insert (format "<section data-mode=\"%s\">\n"
                               (keyfreq--html-escape (symbol-name mode))))
               (insert (format "<h2 id=\"%s\">%s</h2>\n"
@@ -565,7 +679,9 @@ Interactively, use a prefix argument to choose FILENAME."
                               (keyfreq--html-escape mode)))
               (insert "<canvas></canvas>\n")
               (insert (funcall cell
-                               (keyfreq-list (keyfreq-filter-major-mode table mode))))
+                               (keyfreq-list (keyfreq-filter-major-mode table mode))
+                               (lambda (command)
+                                 (or (gethash command keys) ""))))
               (insert "</section>\n")))
           (insert "</main>\n<script>\n")
           (keyfreq--html-insert-asset "script.js")
