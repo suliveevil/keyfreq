@@ -105,8 +105,8 @@
 (kfh-test "pseudo bindings and unprintable keys never reach the report"
          (kfh-ok "menu-bar paths are stripped"
                  (not (string-match-p "menu-bar" (keyfreq--where-is-string 'save-buffer nil))))
-         (kfh-ok "the undefined command has no shortcut"
-                 (equal "" (keyfreq--where-is-string 'undefined nil)))
+         (kfh-ok "an unbound key is reported in the Shortcut column"
+                 (equal "(unbound key)" (keyfreq--where-is-string 'undefined nil)))
          (let* ((log (kfh-fixture '(((dired-mode . dired-toggle-marks) . 9))))
                 (keyfreq-file log)
                (out (expand-file-name "pseudo.html" kfh-tmp)))

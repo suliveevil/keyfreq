@@ -468,7 +468,9 @@
         case "percent":
             return parseFloat(row.children[1].textContent) || 0;
         case "shortcut":
-            return row.children[3].textContent.trim();
+            /* an unbound key is no binding, so it sorts to the bottom */
+            var text = row.children[3].textContent.trim();
+            return text.indexOf("unbound key") >= 0 ? "" : text;
         default:
             return row.children[2].textContent.trim();
         }

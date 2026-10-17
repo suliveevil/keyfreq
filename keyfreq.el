@@ -724,7 +724,9 @@ be encoded as UTF-8."
 Pseudo bindings (menu-bar, tool-bar, ...) and unprintable key ranges
 are left out; the result is always valid UTF-8 text."
   (if (eq command 'undefined)
-      ""
+      ;; The key was unbound; that is a property of the keystroke, so it
+      ;; belongs in the Shortcut column, not in place of the command name.
+      "(unbound key)"
     (keyfreq--html-escape
      (mapconcat (lambda (sequence)
                   (keyfreq--html-printable (key-description sequence)))
@@ -807,13 +809,10 @@ keystroke description."
    (lambda (count perc command)
      (insert (format "<tr><td>%s</td><td>%.2f%%</td><td>%s</td>"
                      (keyfreq--html-number count) perc
-                     (keyfreq--html-escape
-                      ;; Emacs records the symbol `undefined' when an
-                      ;; unbound key is pressed; say so instead of
-                      ;; printing "undefined".
-                      (if (eq command 'undefined)
-                          "(unbound key)"
-                        command)))
+                     ;; Emacs records the symbol `undefined' when an
+                     ;; unbound key is pressed; the Command column keeps
+                     ;; that symbol and the Shortcut column says why.
+                     (keyfreq--html-escape command))
              (format "<td data-count=\"%d\">%s</td></tr>\n"
                      count (funcall shortcut command)))))
   (insert "</tbody>\n</table>\n"))
