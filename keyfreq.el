@@ -305,134 +305,281 @@ is used as MAJOR-MODE-SYMBOL argument."
       )))
 
 
+;;; ------------------------------------------------------------------
+;;; HTML report
+;;; ------------------------------------------------------------------
+
+(defvar keyfreq-html--last-temp-report nil
+  "The temporary report written by the previous `keyfreq-html-v2' call.")
+
+(defun keyfreq--html-escape (string)
+  "Return STRING escaped for use as HTML text or in a quoted attribute."
+  (let ((s (format "%s" string)))
+    (setq s (replace-regexp-in-string "&" "&amp;" s t t))
+    (setq s (replace-regexp-in-string "<" "&lt;" s t t))
+    (setq s (replace-regexp-in-string ">" "&gt;" s t t))
+    (setq s (replace-regexp-in-string "\"" "&quot;" s t t))
+    s))
+
+(defun keyfreq--html-number (number)
+  "Return NUMBER as a string with thousands separators."
+  (let ((s (number-to-string number)))
+    (if (<= (length s) 3)
+        s
+      (let ((parts nil))
+        (while (> (length s) 3)
+          (push (substring s (- (length s) 3)) parts)
+          (setq s (substring s 0 (- (length s) 3))))
+        (push s parts)
+        (mapconcat #'identity parts ",")))))
+
+(defun keyfreq--html-id (string used)
+  "Return a unique id for STRING that is safe in a URL fragment.
+USED is a hash table of ids already handed out; it is updated."
+  (let* ((base (replace-regexp-in-string "[^A-Za-z0-9_-]" "-" string))
+         (base (if (string-match-p "\\`[A-Za-z_]" base)
+                   base
+                 (concat "x-" base)))
+         (id base)
+         (i 1))
+    (while (gethash id used)
+      (setq id (format "%s-%d" base (setq i (1+ i)))))
+    (puthash id t used)
+    id))
+
+(defun keyfreq--html-asset-file (name)
+  "Return the absolute path of the bundled asset NAME."
+  (let ((file (expand-file-name name keyfreq-folder))
+        (lib (locate-library "keyfreq")))
+    (unless (file-exists-p file)
+      (setq file (and lib (expand-file-name name (file-name-directory lib)))))
+    (unless (and file (file-exists-p file))
+      (error "keyfreq: cannot find %s; customize `keyfreq-folder'" name))
+    file))
+
+(defun keyfreq--html-insert-asset (name)
+  "Insert the contents of the bundled asset NAME at point.
+Inlining turns the report into a single self-contained file."
+  (insert
+   (with-temp-buffer
+     (let ((coding-system-for-read 'utf-8))
+       (insert-file-contents (keyfreq--html-asset-file name)))
+     (buffer-string))))
+
+(defun keyfreq--html-modes (table)
+  "Return an alist of (MAJOR-MODE . TOTAL) for TABLE, most used first."
+  (let ((cells nil))
+    (maphash (lambda (key count)
+               (when (consp key)
+                 (let ((cell (assoc (car key) cells)))
+                   (if cell
+                       (setcdr cell (+ (cdr cell) count))
+                     (push (cons (car key) count) cells)))))
+             table)
+    (sort cells
+          (lambda (a b)
+            (if (= (cdr a) (cdr b))
+                (string< (symbol-name (car a)) (symbol-name (car b)))
+              (> (cdr a) (cdr b)))))))
+
+(defun keyfreq--html-insert-table (list shortcut)
+  "Insert an HTML table for LIST, a value returned by `keyfreq-list'.
+SHORTCUT is a function that maps a command to its already escaped
+keystroke description."
+  (insert "<table>\n")
+  (insert "<colgroup><col style=\"width:10%\"><col style=\"width:9%\">"
+          "<col><col style=\"width:42%\"></colgroup>\n")
+  (insert "<thead><tr><th scope=\"col\">Times</th><th scope=\"col\">%</th>"
+          "<th scope=\"col\">Command</th><th scope=\"col\">Shortcut</th>"
+          "</tr></thead>\n<tbody>\n")
+  ;; Keep the rows terse: cells are styled by position, and the counter is
+  ;; carried by `data-count' so the renderer does not have to parse the
+  ;; first column.
+  (keyfreq-format-list
+   list
+   (lambda (count perc command)
+     (insert (format "<tr><td>%s</td><td>%.2f%%</td><td>%s</td>"
+                     (keyfreq--html-number count) perc
+                     (keyfreq--html-escape
+                      ;; Emacs records the symbol `undefined' when an
+                      ;; unbound key is pressed; say so instead of
+                      ;; printing "undefined".
+                      (if (eq command 'undefined)
+                          "(unbound key)"
+                        command)))
+             (format "<td data-count=\"%d\">%s</td></tr>\n"
+                     count (funcall shortcut command)))))
+  (insert "</tbody>\n</table>\n"))
+
 (defun keyfreq-html (filename &optional confirm)
   "Save an HTML file as FILENAME with all the statistics of each mode."
-
   (interactive
-   (list (if buffer-file-name
-	     (read-file-name "Write HTML file: "
-			     nil nil nil nil)
-	   (read-file-name "Write HTML file: " default-directory
-			   (expand-file-name
-			    (file-name-nondirectory (buffer-name))
-			    default-directory)
-			   nil nil))
-	 (not current-prefix-arg)))
-
+   (list (read-file-name "Write HTML file: " nil nil nil
+                         (expand-file-name "keyfreq.html" default-directory))
+         (not current-prefix-arg)))
   (and confirm
        (file-exists-p filename)
        (or (y-or-n-p (format "File `%s' exists; overwrite? " filename))
-	   (error "Canceled")))
-
-  (let ((table (copy-hash-table keyfreq-table))
-	(htmltable (lambda (list)
-		     (insert "<table>\n")
-		     (insert "<thead><tr><th>Times</th><th>Percetage</th><th>Command</th></tr></thead>\n")
-		     (insert "<tbody>\n")
-		     (keyfreq-format-list list
-					  (lambda (count perc command)
-					    (insert (format "<tr><td>%d</td><td>%.2f%%</td><td>%s</td></tr>\n" count perc command))))
-		     (insert "</tbody>\n")
-		     (insert "</table>\n"))))
-
-    ;; Merge with the values in `keyfreq-file'
+           (error "Canceled")))
+  (let ((table (copy-hash-table keyfreq-table)))
     (keyfreq-table-load table)
+    (let* ((modes (keyfreq--html-modes table))
+           (used (make-hash-table :test 'equal))
+           (ids (make-hash-table :test 'eq))
+           (total (car (keyfreq-list table 'no-sort)))
+           (shortcut (lambda (command)
+                       (keyfreq--html-escape (keyfreq-where-is command))))
+           (cell (lambda (list)
+                   (with-temp-buffer
+                     (keyfreq--html-insert-table list shortcut)
+                     (buffer-string)))))
+      (dolist (entry modes)
+        (puthash (car entry)
+                 (keyfreq--html-id (symbol-name (car entry)) used)
+                 ids))
+      (with-temp-file filename
+        (let ((coding-system-for-write 'utf-8-unix))
+          (insert "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n")
+          (insert "<meta charset=\"utf-8\">\n")
+          (insert "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
+          (insert (format "<title>Keyfreq Report - %s commands</title>\n"
+                          (keyfreq--html-number (hash-table-count table))))
+          (insert "<style>\n")
+          (keyfreq--html-insert-asset "style.css")
+          (insert "\n</style>\n</head>\n<body>\n")
+          (insert "<nav class=\"header\" id=\"header\">\n<ul>\n")
+          (insert (format "<li><a href=\"#anchor-all\"><span class=\"name\">All major modes</span><span class=\"count\">%s</span></a></li>\n"
+                          (keyfreq--html-number total)))
+          (dolist (entry modes)
+            (insert (format "<li><a href=\"#%s\"><span class=\"name\">%s</span><span class=\"count\">%s</span></a></li>\n"
+                            (gethash (car entry) ids)
+                            (keyfreq--html-escape (car entry))
+                            (keyfreq--html-number (cdr entry)))))
+          (insert "</ul>\n</nav>\n<main class=\"content\">\n")
+          (insert "<h1>Keyfreq Report</h1>\n")
+          (insert (format "<p class=\"summary\">%s mode/command pairs &middot; %d modes &middot; %s invocations &middot; generated %s</p>\n"
+                          (keyfreq--html-number (hash-table-count table))
+                          (length modes)
+                          (keyfreq--html-number total)
+                          (format-time-string "%Y-%m-%d %H:%M")))
+          (insert "<section data-mode=\"all\">\n")
+          (insert "<h2 id=\"anchor-all\">All major modes</h2>\n")
+          (insert "<canvas></canvas>\n")
+          (insert (funcall cell (keyfreq-list (keyfreq-groups-major-modes table))))
+          (insert "</section>\n")
+          (dolist (entry modes)
+            (let ((mode (car entry)))
+              (insert (format "<section data-mode=\"%s\">\n"
+                              (keyfreq--html-escape (symbol-name mode))))
+              (insert (format "<h2 id=\"%s\">%s</h2>\n"
+                              (gethash mode ids)
+                              (keyfreq--html-escape mode)))
+              (insert "<canvas></canvas>\n")
+              (insert (funcall cell
+                               (keyfreq-list (keyfreq-filter-major-mode table mode))))
+              (insert "</section>\n")))
+          (insert "</main>\n<script>\n")
+          (keyfreq--html-insert-asset "script.js")
+          (insert "\n</script>\n</body>\n</html>\n")))))
+  (message "keyfreq: wrote %s" filename))
 
-    (with-temp-file filename
-      (insert "<html>\n<body>\n")
-      (insert "<h1>Keyfreq Report</h1>\n")
-      (insert "<ul>\n")
-      (insert "<li><a href=\"#all\">All major modes</a></li>\n")
-      (mapc
-       (lambda (major-mode-symbol)
-	 (insert (format "<li><a href=\"#%s\">%s</a></li>\n"
-			 (symbol-name major-mode-symbol)
-			 (symbol-name major-mode-symbol))))
-       (keyfreq-used-major-modes table))
-      (insert "</ul>\n")
+(defun keyfreq-html-v2 (&optional filename open)
+  "Save a self-contained HTML report with a keyboard heat map.
 
-      (insert "<h2><a name=\"all\">All major modes</a></h2>\n")
-      (funcall htmltable (keyfreq-list (keyfreq-groups-major-modes table)))
+The report embeds `style.css' and `script.js', so it can be moved,
+mailed or committed as a single file.
 
-      (mapc
-       (lambda (major-mode-symbol)
-	 (insert (format "<h2><a name=\"%s\">%s</a></h2>\n"
-			 (symbol-name major-mode-symbol)
-			 (symbol-name major-mode-symbol)))
-	 (funcall htmltable (keyfreq-list (keyfreq-filter-major-mode table major-mode-symbol))))
-       (keyfreq-used-major-modes table))
+FILENAME defaults to a fresh file in `temporary-file-directory'
+and the previously generated temporary report is removed.  When
+OPEN is non-nil the report is shown with `browse-url'.
 
-      (insert "</body>\n</html>\n")
-      )
-    ))
-
-(defun keyfreq-html-v2 ()
-  "Save an HTML file with all the statistics of each mode."
-  (interactive)
-  (let ((filename (concat temporary-file-directory (make-temp-name "keyfreq_") ".html"))
-	(filenameScript (concat (file-name-as-directory keyfreq-folder) "script.js"))
-	(filenameStyle (concat (file-name-as-directory keyfreq-folder) "style.css"))
-	(table (copy-hash-table keyfreq-table))
-	(htmltable (lambda (list id)
-		     (insert (concat "<table id=\"" id "\">\n"))
-		     (insert "<thead><tr><th>Times</th><th>Percentage</th><th>Command</th><th>Shortcut</th></tr></thead>\n")
-		     (insert "<tbody>\n")
-		     (keyfreq-format-list list
-					  (lambda (count perc command)
-					    (insert (format "<tr><td>%d</td><td>%.2f%%</td><td>%s</td><td><xmp count=%d>%s</xmp></td></tr>\n" count perc command count (keyfreq-where-is command)))))
-		     (insert "</tbody>\n")
-		     (insert "</table>\n"))))
-    ;; copy script file
-    (unless (file-exists-p (concat temporary-file-directory "keyfreq_script.js"))
-      (copy-file  filenameScript (concat temporary-file-directory "keyfreq_script.js")))
-    ;; copy style file
-    (unless (file-exists-p (concat temporary-file-directory "keyfreq_style.css"))
-      (copy-file  filenameStyle (concat temporary-file-directory "keyfreq_style.css")))
-    ;; Merge with the values in `keyfreq-file'
+Interactively, use a prefix argument to choose FILENAME."
+  (interactive
+   (list (when current-prefix-arg
+           (read-file-name "Write HTML report: " nil nil nil
+                           "keyfreq-report.html"))
+         t))
+  (let ((table (copy-hash-table keyfreq-table)))
     (keyfreq-table-load table)
-
-    (with-temp-file filename
-      (insert "<!DOCTYPE>\n<head><meta charset=\"UTF-8\"><link rel=\"stylesheet\" href=\"keyfreq_style.css\" type=\"text/css\" media=\"screen\" /></head>\n<html>\n<body>\n")
-      (insert "<div class=\"container\">\n")
-      (insert "<div class=\"header\" id=\"header\">\n")
-      (insert "<h1>Keyfreq Report</h1>\n")
-      (insert "<ul>\n")
-      (insert "<li><a href=\"#all-title\">All major modes</a></li>\n")
-      (mapc
-       (lambda (major-mode-symbol)
-	 (insert (format "<li><a href=\"#%s-title\">%s</a></li>\n"
-			 (symbol-name major-mode-symbol)
-			 (symbol-name major-mode-symbol))))
-       (keyfreq-used-major-modes table))
-      (insert "</ul>\n")
-      (insert "</div>\n")
-      (insert "<div class=\"content\" id=\"content\">\n")
-      (insert "<h2><a name=\"all-title\">All major modes</a></h2>\n")
-      (insert "<canvas id=\"canvas-major-modes\" width=\"600\" height=\"250\"></canvas>")
-      (funcall htmltable (keyfreq-list (keyfreq-groups-major-modes table)) "major-modes")
-
-      (mapc
-       (lambda (major-mode-symbol)
-	 (insert (format "<h2><a name=\"%s-title\">%s</a></h2>\n"
-			 (symbol-name major-mode-symbol)
-			 (symbol-name major-mode-symbol)))
-	 (insert (format "<canvas id=\"canvas-%s\" width=\"600\" height=\"250\"></canvas>\n" (symbol-name major-mode-symbol)))
-	 (funcall htmltable (keyfreq-list (keyfreq-filter-major-mode table major-mode-symbol)) (symbol-name major-mode-symbol)))
-       (keyfreq-used-major-modes table))
-      (insert "</div>\n")
-      (insert "</div>\n")
-      (insert "<script type=\"text/javascript\">\n")
-      (insert "var modes = [\n")
-      (mapc
-       (lambda (major-mode-symbol)
-	 (insert (format "'%s'," (symbol-name major-mode-symbol))))
-       (keyfreq-used-major-modes table))
-      (insert "];\n")
-      (insert "</script>\n")
-      (insert (format "<script type=\"text/javascript\" src=\"keyfreq_script.js\"></script>" ))
-      (insert "</body>\n</html>\n"))
-    (browse-url filename)))
-
+    (let* ((modes (keyfreq--html-modes table))
+           (used (make-hash-table :test 'equal))
+           (ids (make-hash-table :test 'eq))
+           (total (car (keyfreq-list table 'no-sort)))
+           (shortcuts (make-hash-table :test 'eq))
+           (file (or filename
+                     (make-temp-file
+                      (expand-file-name "keyfreq-" temporary-file-directory)
+                      nil ".html")))
+           (shortcut
+            (lambda (command)
+              (or (gethash command shortcuts)
+                  (puthash command
+                           (keyfreq--html-escape (keyfreq-where-is command))
+                           shortcuts))))
+           (cell
+            (lambda (list)
+              (with-temp-buffer
+                (keyfreq--html-insert-table list shortcut)
+                (buffer-string)))))
+      (dolist (entry modes)
+        (puthash (car entry)
+                 (keyfreq--html-id (symbol-name (car entry)) used)
+                 ids))
+      (with-temp-file file
+        (let ((coding-system-for-write 'utf-8-unix))
+          (insert "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n")
+          (insert "<meta charset=\"utf-8\">\n")
+          (insert "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
+          (insert (format "<title>Keyfreq Report - %s commands in %d modes</title>\n"
+                          (keyfreq--html-number (hash-table-count table))
+                          (length modes)))
+          (insert "<style>\n")
+          (keyfreq--html-insert-asset "style.css")
+          (insert "\n</style>\n</head>\n<body>\n")
+          (insert "<nav class=\"header\" id=\"header\">\n<ul>\n")
+          (insert (format "<li><a href=\"#anchor-all\"><span class=\"name\">All major modes</span><span class=\"count\">%s</span></a></li>\n"
+                          (keyfreq--html-number total)))
+          (dolist (entry modes)
+            (insert (format "<li><a href=\"#%s\"><span class=\"name\">%s</span><span class=\"count\">%s</span></a></li>\n"
+                            (gethash (car entry) ids)
+                            (keyfreq--html-escape (car entry))
+                            (keyfreq--html-number (cdr entry)))))
+          (insert "</ul>\n</nav>\n<main class=\"content\">\n")
+          (insert "<h1>Keyfreq Report</h1>\n")
+          (insert (format "<p class=\"summary\">%s mode/command pairs &middot; %d modes &middot; %s invocations &middot; generated %s</p>\n"
+                          (keyfreq--html-number (hash-table-count table))
+                          (length modes)
+                          (keyfreq--html-number total)
+                          (format-time-string "%Y-%m-%d %H:%M")))
+          (insert "<section data-mode=\"all\">\n")
+          (insert "<h2 id=\"anchor-all\">All major modes</h2>\n")
+          (insert "<canvas></canvas>\n")
+          (insert (funcall cell (keyfreq-list (keyfreq-groups-major-modes table))))
+          (insert "</section>\n")
+          (dolist (entry modes)
+            (let ((mode (car entry)))
+              (insert (format "<section data-mode=\"%s\">\n"
+                              (keyfreq--html-escape (symbol-name mode))))
+              (insert (format "<h2 id=\"%s\">%s</h2>\n"
+                              (gethash mode ids)
+                              (keyfreq--html-escape mode)))
+              (insert "<canvas></canvas>\n")
+              (insert (funcall cell
+                               (keyfreq-list (keyfreq-filter-major-mode table mode))))
+              (insert "</section>\n")))
+          (insert "</main>\n<script>\n")
+          (keyfreq--html-insert-asset "script.js")
+          (insert "\n</script>\n</body>\n</html>\n")))
+      ;; drop the previous temporary report so the temp dir does not fill up
+      (when (and (null filename)
+                 keyfreq-html--last-temp-report
+                 (not (equal keyfreq-html--last-temp-report file))
+                 (file-exists-p keyfreq-html--last-temp-report))
+        (ignore-errors (delete-file keyfreq-html--last-temp-report)))
+      (setq keyfreq-html--last-temp-report (unless filename file))
+      (message "keyfreq: wrote %s" file)
+      (when open (browse-url file))
+      file)))
 
 (defun keyfreq-json-encode (table)
   "Return a JSON representation of the table of frequencies."
