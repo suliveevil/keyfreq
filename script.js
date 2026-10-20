@@ -11,6 +11,30 @@
 
     /* Apple keyboard layout, in key units.  Kept as a single constant so
        it is not rebuilt for every canvas. */
+    /* What the key cap actually prints.  The names in LAYOUT stay the ones
+       the data is keyed on; these are only what gets drawn. */
+    var KEY_LABEL = {
+        "ESC": "esc",
+        "TAB": "tab",
+        "CAPSLOCK": "caps",
+        "backspace": "delete",
+        "RET": "return",
+        "S": "shift",
+        "RSHIFT": "shift",
+        "SPC": "space",
+        "C": "\u2303",
+        "M": "\u2325",
+        "CMD": "\u2318",
+        "R_CMD": "\u2318",
+        "R_OPT": "\u2325",
+        "G": "fn",
+        "left": "\u2190",
+        "up": "\u2191",
+        "down": "\u2193",
+        "right": "\u2192",
+        "\u23cf": "\u23fb"
+    };
+
     var LAYOUT = [
         // Top row
         {name: ['ESC'], x: 0, y: 0, width: 1.04, height: 0.75},
@@ -311,6 +335,43 @@
 
     var keyBoxes = [];          /* hit-test rectangles of the last draw */
 
+    var FAMILY = "-apple-system, BlinkMacSystemFont, Arial, sans-serif";
+
+    function fitFont(ctx, text, maxWidth, size) {
+        var px = size;
+        while (px > 6) {
+            ctx.font = px + "px " + FAMILY;
+            if (ctx.measureText(text).width <= maxWidth) break;
+            px -= 1;
+        }
+        return px;
+    }
+
+    /* A key with two legends (":" over ";") prints both, like the key cap
+       does: the shifted symbol small in the upper left, the base symbol
+       below it.  Everything else gets its printed name, centred. */
+    function drawKeyLabel(ctx, key, x, y, w, h, unit) {
+        var pad = Math.max(2, unit * 0.09);
+        var room = w - pad * 2;
+        if (key.name.length > 1) {
+            ctx.textAlign = "left";
+            ctx.textBaseline = "top";
+            fitFont(ctx, key.name[0], room, Math.round(unit * 0.29));
+            ctx.fillText(key.name[0], x + pad, y + pad);
+            ctx.textBaseline = "bottom";
+            fitFont(ctx, key.name[1], room, Math.round(unit * 0.40));
+            ctx.fillText(key.name[1], x + pad, y + h - pad);
+        } else {
+            var text = KEY_LABEL[key.name[0]] || key.name[0];
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            fitFont(ctx, text, room, Math.round(unit * 0.30));
+            ctx.fillText(text, x + w / 2, y + h / 2 + 1);
+        }
+        ctx.textAlign = "start";
+        ctx.textBaseline = "alphabetic";
+    }
+
     function draw(canvas, bag, scaleMode, focus, related) {
         var dpr = window.devicePixelRatio || 1;
         var maxX = 0, maxY = 0;
@@ -326,7 +387,7 @@
         });
 
         var legendX = (maxX + 0.8) * U;
-        var labelSize = Math.round(U * 0.32);
+
         var cssW = Math.round(legendX + U * 3.4);
         var cssH = Math.round((maxY + 0.6) * U);
 
@@ -364,11 +425,14 @@
             var t = applyScale(value, max, scaleMode);
             var rgb = heatRGB(t);
             var hot = t > 0.02;
-            var isFocus = focus && focus === key.name[0];
+            var isFocus = !!focus && key.name.indexOf(focus) >= 0;
+            /* either legend of a two-symbol cap counts as related */
+            var relatedHere = !!related && key.name.some(function (n) {
+                return related[n];
+            });
             /* a key that has nothing to do with the focused one keeps its
                shape but loses its heat, so the map stays readable */
-            var muted = !!focus && !isFocus &&
-                !(related && related[key.name[0]]);
+            var muted = !!focus && !isFocus && !relatedHere;
 
             /* key cap: soft shadow, rounded, subtle border */
             ctx.save();
@@ -392,9 +456,7 @@
 
             /* label: dark on light keys, white once the key is hot */
             ctx.fillStyle = muted ? mutedInk : (hot && t > 0.55 ? "#fff" : ink);
-            var label = key.name[0];
-            var tw = ctx.measureText(label).width;
-            ctx.fillText(label, x + (w - tw) / 2, y + h / 2 + 0.5);
+            drawKeyLabel(ctx, key, x, y, w, h, U);
 
             keyBoxes.push({
                 x: x, y: y, w: w, h: h,
@@ -419,6 +481,7 @@
         ctx.lineWidth = 1;
         ctx.strokeRect(legendX + 0.5, barTop + 0.5, barW - 1, barH - 1);
 
+        var labelSize = Math.round(U * 0.32);
         ctx.font = labelSize + "px -apple-system, Arial, sans-serif";
         ctx.fillStyle = ink;
         ctx.fillText(max.toLocaleString(), legendX + barW + 8, barTop);
@@ -764,7 +827,8 @@
 
     /* ---------- key focus ---------- */
 
-    var focusKey = null;         /* the key the user clicked, or null */
+    var focusKey = null;         /* primary name of the clicked cap, or null */
+    var focusNames = null;       /* every name printed on that cap */
     var focusRelated = null;     /* {key: true} its neighbours */
 
     /* Every binding of a row, as lists of keycaps. */
@@ -808,18 +872,19 @@
         return graph;
     }
 
-    function rowMatchesFocus(row, key) {
+    function rowMatchesFocus(row) {
+        if (!focusNames) return false;
         var cells = row.children;
         if (cells.length < 4) return false;
         return rowKeyLists(cells[3]).some(function (keys) {
-            return keys.indexOf(key) >= 0;
+            return keys.some(function (key) { return focusNames.indexOf(key) >= 0; });
         });
     }
 
     function applyFocusToTable(section) {
         var rows = section.querySelectorAll("tbody tr");
         for (var i = 0; i < rows.length; i++) {
-            rows[i].hidden = focusKey ? !rowMatchesFocus(rows[i], focusKey) : false;
+            rows[i].hidden = focusKey ? !rowMatchesFocus(rows[i]) : false;
         }
     }
 
@@ -849,6 +914,7 @@
         chip.hidden = true;
         chip.addEventListener("click", function () {
             focusKey = null;
+            focusNames = null;
             render();
         });
         var statusLine = document.querySelector(".status");
@@ -858,12 +924,12 @@
             chip.hidden = !focusKey;
             if (focusKey) {
                 var related = focusRelated ? Object.keys(focusRelated).length : 0;
-                chip.textContent = focusKey + " \u00d7";
+                chip.textContent = (focusNames || [focusKey]).join(" / ") + " \u00d7";
                 chip.title = related + " related keys; click to clear";
             }
         }
 
-        function canvasKeyAt(event) {
+        function canvasCapAt(event) {
             var rect = canvas.getBoundingClientRect();
             var dpr = window.devicePixelRatio || 1;
             var sx = canvas.width / dpr / rect.width;
@@ -873,22 +939,29 @@
             for (var i = 0; i < keyBoxes.length; i++) {
                 var b = keyBoxes[i];
                 if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) {
-                    return b.names[0];
+                    return b;
                 }
             }
             return null;
         }
 
         canvas.addEventListener("click", function (event) {
-            var name = canvasKeyAt(event);
-            if (!name) return;
-            focusKey = (focusKey === name) ? null : name;
+            var cap = canvasCapAt(event);
+            if (!cap) return;
+            if (focusKey && focusNames && cap.names[0] === focusNames[0]) {
+                focusKey = null;
+                focusNames = null;
+            } else {
+                focusKey = cap.names[0];
+                focusNames = cap.names.slice();
+            }
             render();
         });
 
         document.addEventListener("keydown", function (event) {
             if (event.key === "Escape" && focusKey) {
                 focusKey = null;
+                focusNames = null;
                 render();
             }
         });
@@ -935,15 +1008,25 @@
                rows that are on screen, so they follow the mode and period */
             focusRelated = null;
             if (focusKey) {
+                if (!focusNames) focusNames = [focusKey];
                 var graph = buildKeyGraph(section);
-                var neighbours = graph[focusKey];
+                var neighbours = null;
+                focusNames.forEach(function (name) {
+                    var links = graph[name];
+                    if (!links) return;
+                    neighbours = neighbours || Object.create(null);
+                    Object.keys(links).forEach(function (other) {
+                        neighbours[other] = true;
+                    });
+                });
                 var rows = section.querySelectorAll("tbody tr");
                 var matching = 0;
                 for (var r = 0; r < rows.length; r++) {
-                    if (rowMatchesFocus(rows[r], focusKey)) matching++;
+                    if (rowMatchesFocus(rows[r])) matching++;
                 }
                 if (!matching) {
                     focusKey = null;          /* the key is not used here */
+                    focusNames = null;
                 } else {
                     focusRelated = neighbours || Object.create(null);
                 }
@@ -967,9 +1050,13 @@
                     (period === "now" ? "" : " \u00b7 " + period);
                 if (focusKey) {
                     /* every number on this line is about the focused key */
-                    var onKey = bag[focusKey] || 0;
+                    var onKey = 0;
+                    (focusNames || [focusKey]).forEach(function (name) {
+                        onKey += bag[name] || 0;
+                    });
                     var share = stats.total ? onKey * 100 / stats.total : 0;
-                    summary.textContent = label + " \u00b7 " + focusKey + " \u00b7 " +
+                    summary.textContent = label + " \u00b7 " +
+                        (focusNames || [focusKey]).join(" / ") + " \u00b7 " +
                         number(onKey) + " presses (" + share.toFixed(1) +
                         "% of " + number(stats.total) + ") \u00b7 " +
                         matching + (matching === 1 ? " command" : " commands");
@@ -999,7 +1086,7 @@
             if (!hit) { tip.hidden = true; canvas.style.cursor = "default"; return; }
             canvas.style.cursor = "pointer";
             tip.hidden = false;
-            tip.innerHTML = "<b>" + hit.names[0] + "</b> " +
+            tip.innerHTML = "<b>" + hit.names.join(" / ") + "</b> " +
                 hit.value.toLocaleString() + " presses" +
                 (hit.share ? " \u00b7 " + (hit.share * 100).toFixed(1) + "%" : "");
             var left = event.clientX - rect.left + 14;
