@@ -15,6 +15,7 @@ Compared with upstream:
 | report | one table per mode, stacked | one table at a time, chosen from a menu |
 | heat map | one static canvas per mode | a single interactive canvas |
 | shortcuts | resolved in the global keymap | resolved in each mode's own keymap |
+| keys | resolved after the fact | recorded at press time, in a side file |
 | time | cumulative only | today / 7 days / 30 days / git snapshots |
 
 ![The report](./assets/keyfreq-html-v2.png)
@@ -28,7 +29,7 @@ argument (`C-u`) it asks where to save instead of using a temporary file.
 
 ### Keyboard heat map
 
-One canvas, four controls and no page-level clutter:
+One canvas and a row of menus, with nothing else on the page:
 
 * **Mode** -- `All major modes` or any single mode.  It drives the heat map
   *and* the table below it, so choosing `org-mode` shows org-mode's keys and
@@ -47,8 +48,10 @@ One canvas, four controls and no page-level clutter:
 * **Click** -- focuses a key: it is outlined, the keys it is used with (a
   modifier with the keys it modifies, and the keys of a multi-key sequence)
   keep their heat, every other key fades to a flat grey so the map keeps its
-  shape, and the table keeps only the commands that use it.  Click the chip,
-  press `Escape' or click the key again to clear it.
+  shape, and the table keeps only the commands that use it.  The status line
+  switches to that key -- its presses, its share of the selection and how many
+  commands use it.  Click the chip, press `Escape` or click the key again to
+  clear it.
 * **Modifiers** -- `C-`, `M-`, `S-`, `s-` and `A-` light the Control, Option,
   Shift and Command keys; `s-` is Super (Command), not the letter `s`, and
   names like `<return>` or `<space>` are matched to their key caps.
@@ -84,7 +87,8 @@ The report now resolves each mode/command pair in that mode's own
 
 Resolving is still a guess, though: a command with two bindings gets one of
 them, and every typed character is the single command
-`self-insert-command`, so the character area cannot be split at all.
+`self-insert-command`, so on its own it cannot split the character area.
+Recording the key at press time -- the next section -- fixes both.
 
 ### Recorded keys
 
@@ -171,11 +175,15 @@ Cumulative counters can only answer "since the beginning", so the fork also
 writes one small file per day:
 
 ```
-~/.emacs.d/assets/keyfreq-log                  cumulative rollup
-~/.emacs.d/assets/keyfreq-days/.baseline.log   the rollup before the split
-~/.emacs.d/assets/keyfreq-days/2026-10-18.log  today's deltas
-~/.emacs.d/assets/keyfreq-days/2026-10-17.log  yesterday, frozen
+<keyfreq-file>                     cumulative rollup
+<keyfreq-file>.keys                the recorded keys (see above)
+<keyfreq-days>/.baseline.log       the rollup before the split
+<keyfreq-days>/2026-10-18.log      today's deltas
+<keyfreq-days>/2026-10-17.log      yesterday, frozen
 ```
+
+`<keyfreq-days>` is a `keyfreq-days` directory next to `keyfreq-file` unless
+`keyfreq-daily-directory` says otherwise.
 
 The daily archives are authoritative; `keyfreq-file` is a materialised view that
 `M-x keyfreq-rebuild-rollup` can regenerate from the baseline plus every daily
@@ -201,17 +209,19 @@ friendly to version control.
 1. The keyboard layout is **hardcoded** (Apple).  Feeding it a JSON layout from
    [keyboard-layout-editor.com](http://www.keyboard-layout-editor.com/) would
    generalise it.
-2. Without `keyfreq-record-keys` the map is a map of **hotkeys**, not of typing:
-   `keyfreq` records the command you ran, and the key is resolved afterwards.  On the author's log roughly
-   49% of the recorded presses are mouse events, 22% are typing collapsed into
-   the single `self-insert-command` counter, 10% resolve to no binding at all,
-   and only about 29% land on a physical key -- those proportions depend
+2. Counters collected before `keyfreq-record-keys` was enabled are still a map
+   of **hotkeys**, not of typing: the key is resolved afterwards, a command with
+   two bindings is drawn on its first one, and typed characters collapse into
+   the single `self-insert-command` counter.  The recorded keys fill that gap
+   only for presses made after the setting was turned on, so a fresh log is not
+   comparable with an old one.
+3. Those old counters are what the numbers below describe.  On the author's log
+   roughly 49% of the recorded presses are mouse events, 22% are typing
+   collapsed into `self-insert-command`, 10% resolve to no binding at all, and
+   only about 29% land on a physical key.  Recording the keys moves the typing
+   share onto real key caps, but the mouse share stays: those proportions depend
    entirely on how you use Emacs, so treat them as an illustration, not as a
-   normalisation.  The character area can never be split per letter without
-   recording `this-command-keys`.
-3. With recorded keys a second binding counts by its own share; without them a
-   command with several bindings is drawn on its first one only.  Counters
-   collected before `keyfreq-record-keys` was enabled keep the old behaviour.
+   normalisation.
 4. Auto-generated key descriptions can be surprising: in `dired`,
    `revert-buffer` is `<menu-bar> <file> <revert-buffer>` when you actually press
    `g`.  Pseudo bindings are now filtered out, so the row simply shows no key.
@@ -298,8 +308,8 @@ folder, which holds the inlined `style.css` and `script.js`:
 ## Running the tests
 
 ``` sh
-emacs --batch -l test/keyfreq-tests.el        # persistence, 51 assertions
-emacs --batch -l test/keyfreq-html-tests.el   # the report, 59 assertions
+emacs --batch -l test/keyfreq-tests.el        # persistence, 62 assertions
+emacs --batch -l test/keyfreq-html-tests.el   # the report, 64 assertions
 ```
 
 Both suites build their own fixtures in a temporary directory and never touch
