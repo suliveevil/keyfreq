@@ -239,7 +239,11 @@ aligned exactly like the command counter they accompany."
   (when keyfreq-record-keys
     (let ((pending (make-hash-table :test 'equal)))
       (maphash (lambda (key count)
-                 (when (and (keyfreq--key-entry-p key) (> count 0))
+                 (when (and (keyfreq--key-entry-p key)
+                            (> count 0)
+                            ;; the same exclusions the counters obey, so the
+                            ;; two files never disagree about a command
+                            (not (keyfreq-match-p (nth 1 key))))
                    (puthash key count pending)))
                keyfreq-key-table)
       (when (> (hash-table-count pending) 0)
