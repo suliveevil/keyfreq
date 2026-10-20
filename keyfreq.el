@@ -164,7 +164,14 @@ since the last time the frequencies were saved in `keyfreq-file'.")
 
 
 (defun keyfreq-pre-command-hook ()
-  "Record command execution in `keyfreq-table' hash."
+  "Record command execution in `keyfreq-table' hash.
+
+Also counts the key sequence that invoked the command when
+`keyfreq-record-keys' is non-nil."
+  (keyfreq--record-keys)
+  (when keyfreq-record-keys
+    (setq keyfreq--last-keys
+          (ignore-errors (key-description (this-command-keys)))))
   (let ((command real-last-command) count)
     (when (and command (symbolp command))
       (setq count (gethash (cons major-mode command) keyfreq-table))
@@ -172,6 +179,89 @@ since the last time the frequencies were saved in `keyfreq-file'.")
         (puthash (cons major-mode command) (if count (1+ count) 1)
                  keyfreq-table)
         ))))
+
+;;; ------------------------------------------------------------------
+;;; Recorded keys
+;;; ------------------------------------------------------------------
+
+(defcustom keyfreq-record-keys t
+  "When non-nil, record the key sequence that invoked each command.
+
+`keyfreq' counts commands and resolves their keys later with
+`where-is-internal', which cannot tell which of two bindings was
+actually used and cannot tell which character was typed (every typed
+character is the single command `self-insert-command').  Recording
+`this-command-keys' at invocation time gives the exact key; it is kept
+in a side file so the existing counters keep working unchanged."
+  :group 'keyfreq
+  :type 'boolean)
+
+(defcustom keyfreq-key-file nil
+  "File recording the keys that invoked each command.
+Nil means `keyfreq-file' with `.keys' appended."
+  :group 'keyfreq
+  :type '(choice (const :tag "Derive from keyfreq-file" nil) file))
+
+(defvar keyfreq-key-table (make-hash-table :test 'equal)
+  "Pending key counts, keyed by (MAJOR-MODE COMMAND KEY-DESCRIPTION).")
+
+(defvar keyfreq--last-keys nil
+  "Key description of the invocation that is about to be recorded.")
+
+(defun keyfreq--key-file ()
+  "Return the file holding the recorded keys."
+  (or keyfreq-key-file (concat keyfreq-file ".keys")))
+
+(defun keyfreq--key-entry-p (key)
+  "Return non-nil when KEY looks like a recorded (MODE COMMAND KEYS) entry."
+  (and (consp key)
+       (null (nthcdr 3 key))
+       (symbolp (nth 0 key))
+       (symbolp (nth 1 key))
+       (stringp (nth 2 key))))
+
+(defun keyfreq--record-keys ()
+  "Count the key sequence of the command recorded by this invocation.
+
+`real-last-command' is the command that just ran, and
+`keyfreq--last-keys' holds the keys that invoked it, so the two stay
+aligned exactly like the command counter they accompany."
+  (when (and keyfreq-record-keys
+             keyfreq--last-keys
+             (symbolp real-last-command)
+             (not (string-empty-p keyfreq--last-keys)))
+    (let* ((key (list major-mode real-last-command keyfreq--last-keys))
+           (count (gethash key keyfreq-key-table)))
+      (puthash key (if count (1+ count) 1) keyfreq-key-table))))
+
+(defun keyfreq--save-keys ()
+  "Write the pending `keyfreq-key-table' deltas to `keyfreq--key-file'."
+  (when keyfreq-record-keys
+    (let ((pending (make-hash-table :test 'equal)))
+      (maphash (lambda (key count)
+                 (when (and (keyfreq--key-entry-p key) (> count 0))
+                   (puthash key count pending)))
+               keyfreq-key-table)
+      (when (> (hash-table-count pending) 0)
+        (let ((file (keyfreq--key-file)))
+          (if (and (file-exists-p file)
+                   (> (file-attribute-size (file-attributes file)) 0))
+              (keyfreq--merge-in-place pending file)
+            (keyfreq--write-table pending file)))
+        (clrhash keyfreq-key-table)))))
+
+(defun keyfreq--recorded-keys ()
+  "Return a table mapping (MODE COMMAND) to an alist of (KEYS . COUNT)."
+  (let ((table (make-hash-table :test 'equal))
+        (entries (keyfreq--read-file-entries (keyfreq--key-file))))
+    (when entries
+      (maphash (lambda (key count)
+                 (when (keyfreq--key-entry-p key)
+                   (let* ((pair (list (nth 0 key) (nth 1 key)))
+                          (cell (gethash pair table)))
+                     (puthash pair (cons (cons (nth 2 key) count) cell) table))))
+               entries))
+    table))
 
 (defun keyfreq-groups-major-modes (table)
   "Group major modes in TABLE by command.
@@ -710,6 +800,41 @@ Those are not keystrokes, and they add noise to the Shortcut column."
    "\\`<\\(menu-bar\\|tool-bar\\|tab-bar\\|mode-line\\|vertical-line\\|right-divider\\|bottom-divider\\|vertical-scroll-bar\\|horizontal-scroll-bar\\)>"
    (key-description sequence)))
 
+(defun keyfreq--html-merge-recorded (recorded)
+  "Merge RECORDED, keyed by (MODE COMMAND), into COMMAND -> alist."
+  (let ((all (make-hash-table :test 'equal)))
+    (maphash
+     (lambda (pair alist)
+       (let* ((command (nth 1 pair))
+              (cell (gethash command all)))
+         (dolist (entry alist)
+           (let ((hit (assoc (car entry) cell)))
+             (if hit
+                 (setcdr hit (+ (cdr hit) (cdr entry)))
+               (push (cons (car entry) (cdr entry)) cell))))
+         (puthash command cell all)))
+     recorded)
+    all))
+
+(defun keyfreq--html-keys-text (alist)
+  "Return ALIST's key descriptions as text, most used first."
+  (when alist
+    (keyfreq--html-escape
+     (mapconcat (lambda (pair) (car pair))
+                (sort (copy-sequence alist)
+                      (lambda (a b) (if (= (cdr a) (cdr b))
+                                        (string< (car a) (car b))
+                                      (> (cdr a) (cdr b)))))
+                ", "))))
+
+(defun keyfreq--html-keys-attr (alist)
+  "Return a `data-keys' attribute describing ALIST, or nil."
+  (when alist
+    (format " data-keys=\"%s\""
+            (keyfreq--html-escape
+             (mapconcat (lambda (pair) (format "%s:%d" (car pair) (cdr pair)))
+                        alist "|")))))
+
 (defun keyfreq--html-printable (string)
   "Return STRING with every non-printing character replaced by ?.
 
@@ -739,15 +864,14 @@ are left out; the result is always valid UTF-8 text."
                  (where-is-internal command (or keymaps (list global-map))))
                 ", "))))
 
-(defun keyfreq--html-shortcut-index (table modes)
+(defun keyfreq--html-shortcut-index (table modes recorded)
   "Resolve every mode/command pair in TABLE to its keystrokes.
 
-MODES is the value of `keyfreq--html-modes'.
+MODES is the value of `keyfreq--html-modes'.  RECORDED maps
+(MODE COMMAND) to the keys actually pressed, which wins over resolving
+the command in the keymap.
 
-Return (PER-MODE . UNION).  PER-MODE maps a major mode to a hash table
-of COMMAND -> escaped keystroke string resolved in that mode's own
-keymap.  UNION maps COMMAND -> every binding seen in any mode, which is
-what the \"All major modes\" table shows."
+Return (PER-MODE . UNION)."
   (let ((per-mode (make-hash-table :test 'eq))
         (all (make-hash-table :test 'eq))
         (global-cache (make-hash-table :test 'eq)))
@@ -761,12 +885,14 @@ what the \"All major modes\" table shows."
                      (push (cdr key) commands)))
                  table)
         (dolist (command commands)
-          (let ((text (if map
-                          (keyfreq--where-is-string command map)
-                        (or (gethash command global-cache)
-                            (puthash command
-                                     (keyfreq--where-is-string command nil)
-                                     global-cache)))))
+          (let ((text (or (keyfreq--html-keys-text
+                           (gethash (list mode command) recorded))
+                          (if map
+                              (keyfreq--where-is-string command map)
+                            (or (gethash command global-cache)
+                                (puthash command
+                                         (keyfreq--where-is-string command nil)
+                                         global-cache))))))
             (puthash command text index)
             (when (not (string-empty-p text))
               (puthash command (append (gethash command all) (list text)) all))))
@@ -784,10 +910,13 @@ what the \"All major modes\" table shows."
              all)
     (cons per-mode all)))
 
-(defun keyfreq--html-insert-table (list shortcut)
+(defun keyfreq--html-insert-table (list shortcut key-attr)
   "Insert an HTML table for LIST, a value returned by `keyfreq-list'.
 SHORTCUT is a function that maps a command to its already escaped
-keystroke description."
+keystroke description.  KEYS maps a command to a `data-keys' attribute
+carrying the exact per-key counts, or nil when they were not recorded.
+(The argument is not called KEYS: `keyfreq.el' is dynamically bound, so it
+would capture the caller's `keys' variable.)"
   (insert "<table>\n")
   (insert "<colgroup><col style=\"width:10%\"><col style=\"width:9%\">"
           "<col><col style=\"width:42%\"></colgroup>\n")
@@ -813,8 +942,9 @@ keystroke description."
                      ;; unbound key is pressed; the Command column keeps
                      ;; that symbol and the Shortcut column says why.
                      (keyfreq--html-escape command))
-             (format "<td data-count=\"%d\">%s</td></tr>\n"
-                     count (funcall shortcut command)))))
+             (format "<td data-count=\"%d\"%s>%s</td></tr>\n"
+                     count (or (funcall key-attr command) "")
+                     (funcall shortcut command)))))
   (insert "</tbody>\n</table>\n"))
 
 (defun keyfreq--html-insert-card (modes periods)
@@ -901,7 +1031,9 @@ Interactively, use a prefix argument to choose FILENAME."
            (used (make-hash-table :test 'equal))
            (ids (make-hash-table :test 'eq))
            (total (car (keyfreq-list table 'no-sort)))
-           (index (keyfreq--html-shortcut-index table modes))
+           (recorded (keyfreq--recorded-keys))
+           (all-recorded (keyfreq--html-merge-recorded recorded))
+           (index (keyfreq--html-shortcut-index table modes recorded))
            (per-mode (car index))
            (all-keys (cdr index))
            (snapshots (keyfreq--report-snapshots keyfreq-file))
@@ -910,9 +1042,9 @@ Interactively, use a prefix argument to choose FILENAME."
                      (make-temp-file
                       (expand-file-name "keyfreq-" temporary-file-directory)
                       nil ".html")))
-           (cell (lambda (list shortcut)
+           (cell (lambda (list shortcut key-attr)
                    (with-temp-buffer
-                     (keyfreq--html-insert-table list shortcut)
+                     (keyfreq--html-insert-table list shortcut key-attr)
                      (buffer-string)))))
       (dolist (entry modes)
         (puthash (car entry)
@@ -943,7 +1075,10 @@ Interactively, use a prefix argument to choose FILENAME."
           (insert "<h2 id=\"anchor-all\">All major modes</h2>\n")
           (insert (funcall cell
                            (keyfreq-list (keyfreq-groups-major-modes table))
-                           (lambda (command) (or (gethash command all-keys) ""))))
+                           (lambda (command) (or (gethash command all-keys) ""))
+                           (lambda (command)
+                             (keyfreq--html-keys-attr
+                              (gethash command all-recorded)))))
           (insert "</section>\n")
           (dolist (entry modes)
             (let* ((mode (car entry))
@@ -954,7 +1089,10 @@ Interactively, use a prefix argument to choose FILENAME."
               (insert (funcall cell
                                (keyfreq-list (keyfreq-filter-major-mode table mode))
                                (lambda (command)
-                                 (or (gethash command keys) ""))))
+                                 (or (gethash command keys) ""))
+                               (lambda (command)
+                                 (keyfreq--html-keys-attr
+                                  (gethash (list mode command) recorded)))))
               (insert "</section>\n")))
           (insert "</main>\n")
           (when (> (length (car payload)) 1)
@@ -1387,6 +1525,10 @@ without losing or duplicating counters."
         (cond
          ((not archived) nil)           ; nothing written, keep the deltas
          (t
+          (condition-case err
+              (keyfreq--save-keys)
+            (error (message "keyfreq: cannot write %s: %s"
+                            (keyfreq--key-file) (error-message-string err))))
           (let ((ok (keyfreq--write-rollup pending)))
             ;; the deltas are safe in the archive either way
             (clrhash table)

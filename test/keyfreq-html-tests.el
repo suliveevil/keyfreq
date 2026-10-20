@@ -197,6 +197,42 @@
                           (string-match-p "data-mode=\"org-mode\"" html))))
            (delete-file log) (delete-file out)))
 
+(kfh-test "recorded keys win over resolving the command"
+         (let* ((log (kfh-fixture '(((org-mode . self-insert-command) . 100)
+                                    ((org-mode . next-line) . 15))))
+                (keyfreq-file log)
+                (keyfreq-key-file (concat log ".keys"))
+                (out (expand-file-name "keys.html" kfh-tmp)))
+           (with-temp-file keyfreq-key-file
+             (insert "(((org-mode self-insert-command \"a\") . 60)\n"
+                     " ((org-mode self-insert-command \"b\") . 40)\n"
+                     " ((org-mode next-line \"C-n\") . 10)\n"
+                     " ((org-mode next-line \"<down>\") . 5))"))
+           (keyfreq-html-v2 out nil)
+           (let ((html (kfh-slurp out)))
+             (kfh-ok "the typed characters are listed as shortcuts"
+                     (string-match-p "data-keys=\"a:60|b:40\"" html))
+             (kfh-ok "both bindings of a command keep their own counts"
+                     (string-match-p "data-keys=\"C-n:10|&lt;down&gt;:5\"" html))
+             (kfh-ok "the Shortcut column shows the recorded keys"
+                     (string-match-p ">a, b</td>" html)))
+           (delete-file log) (delete-file keyfreq-key-file) (delete-file out)))
+
+(kfh-test "without recorded keys the keymap is resolved as before"
+         (let* ((log (kfh-fixture '(((org-mode . next-line) . 9))))
+                (keyfreq-file log)
+                (keyfreq-key-file (concat log ".keys"))
+                (out (expand-file-name "nokeys.html" kfh-tmp)))
+           (keyfreq-html-v2 out nil)
+           (let ((html (kfh-slurp out)))
+             ;; the inlined script mentions data-keys, so look at the cells
+             (kfh-ok "no cell carries a data-keys attribute"
+                     (not (string-match-p
+                           "<td data-count=\"[0-9]+\" data-keys=" html)))
+             (kfh-ok "the command still gets a resolved shortcut"
+                     (string-match-p "data-count=\"9\">C-n" html)))
+           (delete-file log) (delete-file out)))
+
 (kfh-test "no git history means no period menu and no data blob"
          (let* ((log (kfh-fixture '(((org-mode . next-line) . 3))))
                 (keyfreq-file log)

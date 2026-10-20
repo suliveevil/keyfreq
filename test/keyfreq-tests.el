@@ -380,6 +380,66 @@
            (kf-ok "汇总照常写入" (= 4 (kf-get file '(org-mode . cmd-0))))
            (delete-directory dir t)))
 
+(kf-test "按键会被单独记录，且第二次保存原地合并"
+         (let* ((dir (make-temp-file "keyfreq-keys-" t))
+                (file (expand-file-name "keyfreq-log" dir))
+                (keyfreq-daily-directory (expand-file-name "days" dir))
+                (keyfreq-file file)
+                (keyfreq-file-lock (concat file ".lock"))
+                (keyfreq-record-keys t)
+                (keyfreq-key-file nil)
+                (keyfreq-key-table (make-hash-table :test 'equal)))
+           (setq keyfreq--rollup-dirty nil)
+           (with-temp-file file (insert "(((org-mode . org-return) . 100)\n)"))
+           ;; 模拟两次调用：都是 org-mode 里按 RET 触发 org-return
+           (dotimes (_ 2)
+             (setq major-mode 'org-mode
+                   real-last-command 'org-return
+                   keyfreq--last-keys "RET")
+             (keyfreq--record-keys))
+           (kf-ok "记录到 (mode command key)"
+                  (= 2 (gethash (list 'org-mode 'org-return "RET")
+                                keyfreq-key-table)))
+           (keyfreq-table-save (kf-make-table '((org-mode org-return 2))) t)
+           (kf-ok "按键文件已写出"
+                  (file-exists-p (concat file ".keys")))
+           (kf-ok "按键文件内容正确"
+                  (= 2 (gethash (list 'org-mode 'org-return "RET")
+                                (keyfreq--read-file-entries (concat file ".keys")))))
+           (let ((lines (kf-lines (concat file ".keys"))))
+             ;; 再记一次、再存：应原地改一行而不是重写
+             (setq major-mode 'org-mode
+                   real-last-command 'org-return
+                   keyfreq--last-keys "RET")
+             (keyfreq--record-keys)
+             (keyfreq-table-save (kf-make-table '((org-mode org-return 1))) t)
+             (kf-ok "行数不变（原地累加）"
+                    (= (length lines) (length (kf-lines (concat file ".keys")))))
+             (kf-ok "计数变成 3"
+                    (= 3 (gethash (list 'org-mode 'org-return "RET")
+                                  (keyfreq--read-file-entries (concat file ".keys"))))))
+           (delete-directory dir t)))
+
+(kf-test "关闭记录时不会产生按键文件"
+         (let* ((dir (make-temp-file "keyfreq-nokeys-" t))
+                (file (expand-file-name "keyfreq-log" dir))
+                (keyfreq-daily-directory (expand-file-name "days" dir))
+                (keyfreq-file file)
+                (keyfreq-file-lock (concat file ".lock"))
+                (keyfreq-record-keys nil)
+                (keyfreq-key-table (make-hash-table :test 'equal)))
+           (setq keyfreq--rollup-dirty nil)
+           (with-temp-file file (insert "()"))
+           (setq major-mode 'org-mode real-last-command 'org-return
+                 keyfreq--last-keys "RET")
+           (keyfreq--record-keys)
+           (kf-ok "没有记录"
+                  (zerop (hash-table-count keyfreq-key-table)))
+           (keyfreq-table-save (kf-make-table '((org-mode org-return 1))) t)
+           (kf-ok "没有按键文件"
+                  (not (file-exists-p (concat file ".keys"))))
+           (delete-directory dir t)))
+
 (princ (format "\n----------------------------------------\n%d passed, %d failed\n"
                kf-pass kf-fail))
 (delete-directory kf-tmp t)

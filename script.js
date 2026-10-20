@@ -387,12 +387,30 @@
                 if (cells.length < 4) continue;
                 var command = cells[2].textContent.trim();
                 bag[command] = parseInt(cells[0].textContent.replace(/[^0-9]/g, ""), 10) || 0;
-                texts[command] = cells[3].textContent;
+                var cell = cells[3];
+                texts[command] = {
+                    text: cell.textContent,
+                    /* keys recorded at press time beat any later guess */
+                    keys: parseKeyAttr(cell.getAttribute("data-keys"))
+                };
             }
             counts[id] = bag;
             catalog[id] = texts;
         });
         return all;
+    }
+
+    function parseKeyAttr(value) {
+        if (!value) return null;
+        var out = [];
+        value.split("|").forEach(function (part) {
+            var at = part.lastIndexOf(":");
+            if (at <= 0) return;
+            var count = parseInt(part.slice(at + 1), 10);
+            if (!count) return;
+            out.push([part.slice(0, at), count]);
+        });
+        return out.length ? out : null;
     }
 
     function bagFrom(pairs, resolve) {
@@ -402,9 +420,29 @@
             var n = pairs[i][1];
             var modeId = pairs[i][2];
             if (!n) continue;
-            var text = resolve(command, modeId);
-            if (!text) continue;
-            var binding = firstBinding(text);
+            var info = resolve(command, modeId);
+            if (!info) continue;
+
+            if (info.keys) {
+                /* The report carries the keys that were actually pressed.
+                   They are all-time counts, so a period view uses their
+                   proportions rather than their absolute values. */
+                var total = 0;
+                info.keys.forEach(function (pair) { total += pair[1]; });
+                var scale = total ? n / total : 0;
+                info.keys.forEach(function (pair) {
+                    var keys = shortcutKeys(pair[0]);
+                    var seen = Object.create(null);
+                    keys.forEach(function (key) {
+                        if (seen[key] || !mapsToKey(key)) return;
+                        seen[key] = true;
+                        bag[key] = (bag[key] || 0) + pair[1] * scale;
+                    });
+                });
+                continue;
+            }
+
+            var binding = firstBinding(info.text);
             if (!binding) continue;
             var keys = shortcutKeys(binding);
             var seen = Object.create(null);
@@ -638,15 +676,20 @@
             var command = row[0];
             var count = row[1];
             var percent = sum ? (count * 100 / sum) : 0;
-            var shortcut = (catalog[id] || {})[command];
-            if (shortcut === undefined) {
-                shortcut = (catalog.all || {})[command] || "";
+            var entry = (catalog[id] || {})[command];
+            if (entry === undefined) entry = (catalog.all || {})[command];
+            var text = entry ? entry.text : "";
+            var attr = "";
+            if (entry && entry.keys) {
+                attr = " data-keys=\"" + escapeHTML(entry.keys.map(function (pair) {
+                    return pair[0] + ":" + pair[1];
+                }).join("|")) + "\"";
             }
             return "<tr><td>" + number(count) + "</td><td>" +
                 percent.toFixed(2) + "%</td><td>" +
                 escapeHTML(command) + "</td>" +
-                "<td data-count=\"" + count + "\">" +
-                escapeHTML(shortcut) + "</td></tr>";
+                "<td data-count=\"" + count + "\"" + attr + ">" +
+                escapeHTML(text) + "</td></tr>";
         }).join("");
 
         table.querySelector("tbody").innerHTML = html ||

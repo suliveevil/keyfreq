@@ -68,6 +68,35 @@ The report now resolves each mode/command pair in that mode's own
   commands, so counting a press once per binding would multiply it;
 * skips unprintable key ranges, so the file is always valid UTF-8.
 
+Resolving is still a guess, though: a command with two bindings gets one of
+them, and every typed character is the single command
+`self-insert-command`, so the character area cannot be split at all.
+
+### Recorded keys
+
+With `keyfreq-record-keys` (the default) keyfreq also stores the key
+sequence that actually invoked each command, taken from
+`this-command-keys` at the moment it runs, in a side file
+(`<keyfreq-file>.keys`):
+
+``` elisp
+(((org-mode . self-insert-command) . 100)     ; the counter, as always
+((org-mode self-insert-command "a") . 60)     ; the side file
+((org-mode self-insert-command "b") . 40)
+((org-mode next-line "C-n") . 10)
+((org-mode next-line "<down>") . 5)
+```
+
+The report draws the recorded keys when it has them and falls back to
+resolving the command for older counts, so both are visible at once and
+nothing has to be migrated.  Two things that were impossible become plain
+facts: typed characters get their own keys, and a command bound twice
+contributes to each binding by its real share.  The side file is patched in
+place and grows one line per (mode, command, key) used.
+
+A period view has no per-period key split, so it applies the recorded
+proportions to that period's counts.
+
 > The figures below are the author's own usage, not a property of the patch.
 > On that log -- 5,028 mode/command pairs over 140 modes -- `org-mode` resolved
 > **57.7%** of its presses to a key with the upstream code and **88.1%** with
@@ -133,15 +162,17 @@ friendly to version control.
 1. The keyboard layout is **hardcoded** (Apple).  Feeding it a JSON layout from
    [keyboard-layout-editor.com](http://www.keyboard-layout-editor.com/) would
    generalise it.
-2. `keyfreq` records the *command* you ran, not the keys you pressed.  The map is
-   therefore a map of **hotkeys**, not of typing.  On the author's log roughly
+2. Without `keyfreq-record-keys` the map is a map of **hotkeys**, not of typing:
+   `keyfreq` records the command you ran, and the key is resolved afterwards.  On the author's log roughly
    49% of the recorded presses are mouse events, 22% are typing collapsed into
    the single `self-insert-command` counter, 10% resolve to no binding at all,
    and only about 29% land on a physical key -- those proportions depend
    entirely on how you use Emacs, so treat them as an illustration, not as a
    normalisation.  The character area can never be split per letter without
    recording `this-command-keys`.
-3. A command with several bindings is drawn on its first one only.
+3. With recorded keys a second binding counts by its own share; without them a
+   command with several bindings is drawn on its first one only.  Counters
+   collected before `keyfreq-record-keys` was enabled keep the old behaviour.
 4. Auto-generated key descriptions can be surprising: in `dired`,
    `revert-buffer` is `<menu-bar> <file> <revert-buffer>` when you actually press
    `g`.  Pseudo bindings are now filtered out, so the row simply shows no key.
@@ -218,6 +249,8 @@ folder, which holds the inlined `style.css` and `script.js`:
 | `keyfreq-daily-directory` | next to `keyfreq-file` | Where the daily archives live. |
 | `keyfreq-html-history` | `t` | Read the git history for the period menu.  `nil` skips it, which saves a few seconds on a repository with a long history of the file. |
 | `keyfreq-coding-system` | `nil` | Coding system of the file; `nil` detects it, so an existing file keeps its encoding. |
+| `keyfreq-record-keys` | `t` | Record the key sequence that invoked each command, in `<keyfreq-file>.keys`. |
+| `keyfreq-key-file` | `nil` | Where the recorded keys live; `nil` derives it from `keyfreq-file`. |
 | `keyfreq-excluded-commands` | `nil` | Commands that are never counted (noise such as `mouse-*`). |
 | `keyfreq-excluded-regexp` | `nil` | Regexps of commands that are never counted. |
 | `keyfreq-autosave-timeout` | `600` | Seconds between automatic saves. |
