@@ -938,11 +938,11 @@
                 var graph = buildKeyGraph(section);
                 var neighbours = graph[focusKey];
                 var rows = section.querySelectorAll("tbody tr");
-                var present = false;
-                for (var r = 0; r < rows.length && !present; r++) {
-                    present = rowMatchesFocus(rows[r], focusKey);
+                var matching = 0;
+                for (var r = 0; r < rows.length; r++) {
+                    if (rowMatchesFocus(rows[r], focusKey)) matching++;
                 }
-                if (!present) {
+                if (!matching) {
                     focusKey = null;          /* the key is not used here */
                 } else {
                     focusRelated = neighbours || Object.create(null);
@@ -963,10 +963,20 @@
                     : "no keyboard shortcuts in " + mode;
             }
             if (summary) {
-                summary.textContent = (mode === "all" ? "all modes" : mode) +
-                    (period === "now" ? "" : " \u00b7 " + period) +
-                    (focusKey ? " \u00b7 " + focusKey + " focused" : "") +
-                    " \u00b7 " + stats.total.toLocaleString() + " presses";
+                var label = (mode === "all" ? "all modes" : mode) +
+                    (period === "now" ? "" : " \u00b7 " + period);
+                if (focusKey) {
+                    /* every number on this line is about the focused key */
+                    var onKey = bag[focusKey] || 0;
+                    var share = stats.total ? onKey * 100 / stats.total : 0;
+                    summary.textContent = label + " \u00b7 " + focusKey + " \u00b7 " +
+                        number(onKey) + " presses (" + share.toFixed(1) +
+                        "% of " + number(stats.total) + ") \u00b7 " +
+                        matching + (matching === 1 ? " command" : " commands");
+                } else {
+                    summary.textContent = label + " \u00b7 " +
+                        stats.total.toLocaleString() + " presses";
+                }
             }
             tip.hidden = true;
         }
