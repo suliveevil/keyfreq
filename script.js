@@ -311,7 +311,7 @@
 
     var keyBoxes = [];          /* hit-test rectangles of the last draw */
 
-    function draw(canvas, bag, scaleMode) {
+    function draw(canvas, bag, scaleMode, focus, related) {
         var dpr = window.devicePixelRatio || 1;
         var maxX = 0, maxY = 0;
         LAYOUT.forEach(function (k) {
@@ -360,6 +360,12 @@
             var t = applyScale(value, max, scaleMode);
             var rgb = heatRGB(t);
             var hot = t > 0.02;
+            /* with a key focused, only that key and the keys it is used
+               with are drawn at all */
+            if (focus && focus !== key.name[0] &&
+                !(related && related[key.name[0]])) {
+                return;
+            }
 
             /* key cap: soft shadow, rounded, subtle border */
             ctx.save();
@@ -373,8 +379,9 @@
             ctx.fill();
             ctx.restore();
 
-            ctx.strokeStyle = hot ? "rgba(0,0,0,.12)" : edge;
-            ctx.lineWidth = 1;
+            var isFocus = focus && focus === key.name[0];
+            ctx.strokeStyle = isFocus ? "#cb0000" : (hot ? "rgba(0,0,0,.12)" : edge);
+            ctx.lineWidth = isFocus ? 2 : 1;
             roundRect(ctx, x + 0.5, y + 0.5, w - 1, h - 1, RADIUS - 0.5);
             ctx.stroke();
 
@@ -750,6 +757,67 @@
                    parseInt(table.dataset.sortDir || "-1", 10));
     }
 
+    /* ---------- key focus ---------- */
+
+    var focusKey = null;         /* the key the user clicked, or null */
+    var focusRelated = null;     /* {key: true} its neighbours */
+
+    /* Every binding of a row, as lists of keycaps. */
+    function rowKeyLists(cell) {
+        var lists = [];
+        var recorded = parseKeyAttr(cell.getAttribute("data-keys"));
+        if (recorded) {
+            recorded.forEach(function (pair) {
+                var keys = shortcutKeys(pair[0]);
+                if (keys.length) lists.push(keys);
+            });
+            return lists;
+        }
+        splitShortcut(cell.textContent).forEach(function (binding) {
+            if (isPseudo(binding)) return;
+            var keys = shortcutKeys(binding);
+            if (keys.length) lists.push(keys);
+        });
+        return lists;
+    }
+
+    /* Two keys are related when they share a binding: a modifier with the
+       key it modifies, or two keys of a multi-key sequence. */
+    function buildKeyGraph(section) {
+        var graph = Object.create(null);
+        function link(a, b) {
+            if (a === b) return;
+            (graph[a] || (graph[a] = Object.create(null)))[b] = true;
+            (graph[b] || (graph[b] = Object.create(null)))[a] = true;
+        }
+        var rows = section.querySelectorAll("tbody tr");
+        for (var i = 0; i < rows.length; i++) {
+            var cells = rows[i].children;
+            if (cells.length < 4) continue;
+            rowKeyLists(cells[3]).forEach(function (keys) {
+                for (var a = 0; a < keys.length; a++) {
+                    for (var b = a + 1; b < keys.length; b++) link(keys[a], keys[b]);
+                }
+            });
+        }
+        return graph;
+    }
+
+    function rowMatchesFocus(row, key) {
+        var cells = row.children;
+        if (cells.length < 4) return false;
+        return rowKeyLists(cells[3]).some(function (keys) {
+            return keys.indexOf(key) >= 0;
+        });
+    }
+
+    function applyFocusToTable(section) {
+        var rows = section.querySelectorAll("tbody tr");
+        for (var i = 0; i < rows.length; i++) {
+            rows[i].hidden = focusKey ? !rowMatchesFocus(rows[i], focusKey) : false;
+        }
+    }
+
     /* ---------- wiring ---------- */
 
     function boot() {
@@ -767,6 +835,58 @@
         var allSections = [];
         var sectionsById = Object.create(null);
         var data = null;
+
+        /* a chip showing the focused key, so it can be cleared by mouse */
+        var chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "focus-chip";
+        chip.id = "focus-chip";
+        chip.hidden = true;
+        chip.addEventListener("click", function () {
+            focusKey = null;
+            render();
+        });
+        var controls = document.querySelector(".controls");
+        if (controls) controls.appendChild(chip);
+
+        function updateChip() {
+            chip.hidden = !focusKey;
+            if (focusKey) {
+                var related = focusRelated ? Object.keys(focusRelated).length : 0;
+                chip.textContent = focusKey + " \u00d7";
+                chip.title = related + " related keys; click to clear";
+            }
+        }
+
+        function canvasKeyAt(event) {
+            var rect = canvas.getBoundingClientRect();
+            var dpr = window.devicePixelRatio || 1;
+            var sx = canvas.width / dpr / rect.width;
+            var sy = canvas.height / dpr / rect.height;
+            var x = (event.clientX - rect.left) * sx;
+            var y = (event.clientY - rect.top) * sy;
+            for (var i = 0; i < keyBoxes.length; i++) {
+                var b = keyBoxes[i];
+                if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) {
+                    return b.names[0];
+                }
+            }
+            return null;
+        }
+
+        canvas.addEventListener("click", function (event) {
+            var name = canvasKeyAt(event);
+            if (!name) return;
+            focusKey = (focusKey === name) ? null : name;
+            render();
+        });
+
+        document.addEventListener("keydown", function (event) {
+            if (event.key === "Escape" && focusKey) {
+                focusKey = null;
+                render();
+            }
+        });
 
         readTables();
         history = loadHistory();
@@ -806,8 +926,29 @@
                 section.dataset.built = "1";
             }
 
+            /* the focused key and the keys it is used with come from the
+               rows that are on screen, so they follow the mode and period */
+            focusRelated = null;
+            if (focusKey) {
+                var graph = buildKeyGraph(section);
+                var neighbours = graph[focusKey];
+                var rows = section.querySelectorAll("tbody tr");
+                var present = false;
+                for (var r = 0; r < rows.length && !present; r++) {
+                    present = rowMatchesFocus(rows[r], focusKey);
+                }
+                if (!present) {
+                    focusKey = null;          /* the key is not used here */
+                } else {
+                    focusRelated = neighbours || Object.create(null);
+                }
+            }
+            applyFocusToTable(section);
+            updateChip();
+
             var bag = bagFor(mode, period);
-            var stats = draw(canvas, bag, scaleSelect ? scaleSelect.value : "sqrt");
+            var stats = draw(canvas, bag, scaleSelect ? scaleSelect.value : "sqrt",
+                             focusKey, focusRelated);
 
             canvas.hidden = stats.max === 0;
             emptyNote.hidden = stats.max !== 0;
@@ -819,6 +960,7 @@
             if (summary) {
                 summary.textContent = (mode === "all" ? "all modes" : mode) +
                     (period === "now" ? "" : " \u00b7 " + period) +
+                    (focusKey ? " \u00b7 " + focusKey + " focused" : "") +
                     " \u00b7 " + stats.total.toLocaleString() + " presses";
             }
             tip.hidden = true;

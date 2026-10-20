@@ -464,3 +464,33 @@ th[aria-sort="descending"] button.sort::after {
 section[hidden] {
     display: none;
 }
+
+/* ---------- focused key ---------- */
+
+.focus-chip {
+    padding: 4px 8px;
+    border: 1px solid #cb0000;
+    border-radius: 999px;
+    background: #fdecec;
+    color: #a50000;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.focus-chip:hover {
+    background: #f9d8d8;
+}
+
+tbody tr[hidden] {
+    display: none;
+}
+
+@media (prefers-color-scheme: dark) {
+    .focus-chip {
+        border-color: #ff6b6b;
+        background: #3a1d1d;
+        color: #ff9a9a;
+    }
+}

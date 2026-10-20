@@ -38,6 +38,10 @@ One canvas, four controls and no page-level clutter:
 * **Period** -- `Today`, `Last 7 days`, `Last 30 days`, one entry per month
   found in the git history of `keyfreq-file`, and `All time` (the default).
 * **Hover** -- shows the key, the number of presses and its share.
+* **Click** -- focuses a key: the map keeps only that key and the keys it is
+  used with (a modifier with its keys, and the keys of a multi-key sequence),
+  and the table keeps only the commands that use it.  Click the chip, press
+  `Escape' or click the key again to clear it.
 * **Modifiers** -- `C-`, `M-`, `S-`, `s-` and `A-` light the Control, Option,
   Shift and Command keys; `s-` is Super (Command), not the letter `s`, and
   names like `<return>` or `<space>` are matched to their key caps.
