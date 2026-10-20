@@ -851,8 +851,8 @@
             focusKey = null;
             render();
         });
-        var controls = document.querySelector(".controls");
-        if (controls) controls.appendChild(chip);
+        var statusLine = document.querySelector(".status");
+        if (statusLine) statusLine.appendChild(chip);
 
         function updateChip() {
             chip.hidden = !focusKey;

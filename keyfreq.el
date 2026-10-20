@@ -1019,8 +1019,7 @@ MODES is the value of `keyfreq--html-modes'; PERIODS is the list of
 history periods, or nil when there is no git history.  The card holds a
 single canvas plus the controls that choose what it shows."
   (insert "<section class=\"card\" id=\"heatmap-card\">\n")
-  (insert "<div class=\"card-head\">\n")
-  (insert "<h2>Keyboard heat map</h2>\n")
+  (insert "<h2 class=\"card-title\">Keyboard heat map</h2>\n")
   (insert "<div class=\"controls\">\n")
   (insert "<label>Mode <select id=\"mode-select\">")
   (insert "<option value=\"all\">All major modes</option>")
@@ -1044,18 +1043,23 @@ single canvas plus the controls that choose what it shows."
                         (keyfreq--html-escape (keyfreq--period-label period))))))
     (insert "<option value=\"now\" selected>All time</option>")
     (insert "</select></label>\n"))
-  (insert "<span class=\"scope\" id=\"scope-summary\"></span>\n")
   (insert "<span class=\"modes-total\" id=\"modes-meta\"></span>\n")
-  (insert "</div>\n</div>\n")
+  (insert "</div>\n")
+  ;; The status line owns its own row and a fixed height: focusing a key
+  ;; makes the text longer, and a shared row would reflow the controls.
+  (insert "<div class=\"status\">\n")
+  (insert "<span class=\"scope\" id=\"scope-summary\"></span>\n")
+  (insert "</div>\n")
   (insert "<div class=\"heatmap-wrap\">\n")
   (insert "<canvas id=\"heatmap\" width=\"900\" height=\"340\"></canvas>\n")
   (insert "<div class=\"key-tip\" id=\"key-tip\" hidden></div>\n")
   (insert "<p class=\"empty\" id=\"empty-note\" hidden>"
           "no keyboard shortcuts in this selection</p>\n")
   (insert "</div>\n")
-  (insert "<p class=\"hint\">Hover a key for its press count.  Each command "
-          "is counted once, on its first real binding, resolved in that "
-          "mode's own keymap.</p>\n")
+  (insert "<p class=\"hint\">Hover a key for its press count, click it to "
+          "keep only that key and the commands that use it.  Each command is "
+          "counted once, on its first real binding, resolved in that mode's "
+          "own keymap.</p>\n")
   (insert "</section>\n"))
 
 (defun keyfreq-html (filename &optional confirm)

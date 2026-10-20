@@ -289,20 +289,22 @@ canvas[hidden] {
     box-shadow: 0 1px 2px rgba(0, 0, 0, .05), 0 10px 28px rgba(0, 0, 0, .05);
 }
 
-.card-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    flex-wrap: wrap;
-}
-
-.card-head h2 {
-    margin: 0;
+.card-title {
+    margin: 0 0 14px 0;
     padding: 0;
     border: 0;
     font-size: 20px;
     font-weight: 600;
+}
+
+/* the summary and the focus chip get their own row, so a longer text can
+   never push the controls around */
+.status {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 26px;
+    margin: 10px 0 2px 0;
 }
 
 .controls {
@@ -318,6 +320,13 @@ canvas[hidden] {
     display: flex;
     align-items: center;
     gap: 6px;
+}
+
+.controls .modes-total {
+    margin-left: auto;
+    color: #8a8a90;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
 }
 
 .controls select {
