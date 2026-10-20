@@ -146,17 +146,69 @@
         return null;
     }
 
-    /* "C-x C-s" -> ["C","x","C","s"];  "<down-mouse-1>" is skipped. */
+    /* Emacs key descriptions put the modifiers first: C- M- S- s- H- A-.
+       `s-' is Super -- the macOS Command key -- so the leading letter must
+       not be mistaken for the letter key of the same name. */
+    var MODIFIER_KEYCAP = {
+        "C": "C",       /* Control */
+        "M": "M",       /* Meta, the Option key */
+        "S": "S",       /* Shift */
+        "s": "CMD",     /* Super, the Command key */
+        "A": "M",       /* Alt is the same physical key as Meta here */
+        "H": null       /* Hyper has no key of its own */
+    };
+
+    /* "<return>" and friends mean a keycap that is not spelled that way. */
+    var NAMED_KEYCAP = {
+        "return": "RET", "ret": "RET", "newline": "RET", "linefeed": "RET",
+        "space": "SPC", "tab": "TAB", "backtab": "TAB",
+        "backspace": "backspace", "delete": "backspace",
+        "deletechar": "backspace", "escape": "ESC", "esc": "ESC",
+        "prior": null, "next": null, "home": null, "end": null
+    };
+
+    function parseChord(chord) {
+        var modifiers = [];
+        var rest = chord;
+        var match = /^([CMSsHA])-/.exec(rest);
+        while (match) {
+            if (MODIFIER_KEYCAP[match[1]]) modifiers.push(MODIFIER_KEYCAP[match[1]]);
+            rest = rest.slice(2);
+            match = /^([CMSsHA])-/.exec(rest);
+        }
+        return { modifiers: modifiers, base: rest };
+    }
+
+    function keycapFor(base) {
+        /* a modifier may prefix a named key, as in C-<left> */
+        base = base.replace(/^</, "").replace(/>$/, "");
+        var lower = base.toLowerCase();
+        if (Object.prototype.hasOwnProperty.call(NAMED_KEYCAP, lower)) {
+            return NAMED_KEYCAP[lower];
+        }
+        if (/^f([1-9]|1[0-2])$/.test(lower)) return "F" + lower.slice(1);
+        return base;
+    }
+
+    /* "C-x C-s" -> ["C","x","C","s"];  "s-q" -> ["CMD","q"]. */
     function shortcutKeys(binding) {
         if (/mouse/i.test(binding)) return [];
-        return binding
-            .replace(/[<>]/g, " ")
-            .split(/[\s]+/)
-            .reduce(function (acc, chord) {
-                return acc.concat(chord.split("-"));
-            }, [])
-            .map(function (s) { return s.trim(); })
-            .filter(function (s) { return s.length > 0; });
+        var out = [];
+        String(binding).split(/\s+/).forEach(function (chord) {
+            chord = chord.replace(/^</, "").replace(/>$/, "");
+            if (!chord) return;
+            var parsed = parseChord(chord);
+            parsed.modifiers.forEach(function (name) { out.push(name); });
+            var base = keycapFor(parsed.base);
+            if (!base) return;
+            /* an uppercase letter is shift plus that letter */
+            if (/^[A-Z]$/.test(base)) {
+                out.push("S");
+                base = base.toLowerCase();
+            }
+            out.push(base);
+        });
+        return out;
     }
 
     function keyFrequency(table, skip) {

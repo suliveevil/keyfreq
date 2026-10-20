@@ -38,6 +38,9 @@ One canvas, four controls and no page-level clutter:
 * **Period** -- `Today`, `Last 7 days`, `Last 30 days`, one entry per month
   found in the git history of `keyfreq-file`, and `All time` (the default).
 * **Hover** -- shows the key, the number of presses and its share.
+* **Modifiers** -- `C-`, `M-`, `S-`, `s-` and `A-` light the Control, Option,
+  Shift and Command keys; `s-` is Super (Command), not the letter `s`, and
+  names like `<return>` or `<space>` are matched to their key caps.
 
 Heat is a single accent ramp over a neutral key cap rather than a rainbow: a
 rainbow invents banding that is not in the data.  The canvas follows
