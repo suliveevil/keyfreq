@@ -100,6 +100,31 @@ place and grows one line per (mode, command, key) used.
 A period view has no per-period key split, so it applies the recorded
 proportions to that period's counts.
 
+### Keys that never run a command
+
+A command loop only sees commands, so some keys were invisible: the
+answers to `y-or-n-p', the per-hit keys of `query-replace', and anything
+else read with `read-event' / `read-char' / `read-key' while a command is
+running.  `keyfreq-record-prompts' (the default) advises those three
+functions and counts what they return:
+
+* they are counted under the pseudo command `keyfreq-prompt', because no
+  real command runs for them -- add that name to
+  `keyfreq-excluded-commands' to hide the row again;
+* they enter the same key file, so the heat map shows `y`, `n` and `q`
+  for a replacement session.
+
+What still cannot be recorded, at this level:
+
+* `ESC` on its own.  Emacs maps it to `meta-prefix-char`, so it is a
+  prefix, not a command: nothing runs and nothing is counted.  `ESC` followed
+  by a key arrives as `M-<key>` (the heat map lights the Option key), and the
+  ESC cap itself never lights up.
+* other bare prefixes (`C-x`, `C-c`, `C-h`, ...), and any key that aborts
+  instead of running a command;
+* keys that go to a subprocess, as in `vterm` or `ansi-term`;
+* keys pressed in other applications.
+
 > The figures below are the author's own usage, not a property of the patch.
 > On that log -- 5,028 mode/command pairs over 140 modes -- `org-mode` resolved
 > **57.7%** of its presses to a key with the upstream code and **88.1%** with
@@ -253,6 +278,7 @@ folder, which holds the inlined `style.css` and `script.js`:
 | `keyfreq-html-history` | `t` | Read the git history for the period menu.  `nil` skips it, which saves a few seconds on a repository with a long history of the file. |
 | `keyfreq-coding-system` | `nil` | Coding system of the file; `nil` detects it, so an existing file keeps its encoding. |
 | `keyfreq-record-keys` | `t` | Record the key sequence that invoked each command, in `<keyfreq-file>.keys`. |
+| `keyfreq-record-prompts` | `t` | Also count keys read outside the command loop (`y-or-n-p`, `query-replace`), under `keyfreq-prompt`. |
 | `keyfreq-key-file` | `nil` | Where the recorded keys live; `nil` derives it from `keyfreq-file`. |
 | `keyfreq-excluded-commands` | `nil` | Commands that are never counted (noise such as `mouse-*`). |
 | `keyfreq-excluded-regexp` | `nil` | Regexps of commands that are never counted. |

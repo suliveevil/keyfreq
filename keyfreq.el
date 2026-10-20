@@ -114,7 +114,9 @@ various keyfreq-* functions."
   :group 'keyfreq
 
   (if keyfreq-mode
-      (add-hook 'pre-command-hook 'keyfreq-pre-command-hook)
+      (progn
+        (add-hook 'pre-command-hook 'keyfreq-pre-command-hook)
+        (when keyfreq-record-prompts (keyfreq--enable-prompt-advice)))
     (remove-hook 'pre-command-hook 'keyfreq-pre-command-hook)))
 
 
@@ -162,6 +164,67 @@ since the last time the frequencies were saved in `keyfreq-file'.")
         (when keyfreq-excluded-regexp
           (string-match-p filter (symbol-name cmd))))))
 
+
+(defcustom keyfreq-record-prompts t
+  "When non-nil, also record the keys that prompts read directly.
+
+Commands such as `query-replace' read their per-hit keys outside the
+command loop, so `pre-command-hook' never sees them.  Advising
+`read-event', `read-char' and `read-key' recovers them.  Because no real
+command runs for those keys they are counted under the pseudo command
+`keyfreq-prompt', which `keyfreq-excluded-commands' can exclude in turn."
+  :group 'keyfreq
+  :type 'boolean)
+
+(defconst keyfreq-prompt-command 'keyfreq-prompt
+  "Pseudo command standing for keys read outside the command loop.")
+
+(defvar keyfreq--prompt-advised nil
+  "Non-nil once the read functions carry `keyfreq--record-prompt'.")
+
+(defun keyfreq--count-command (mode command)
+  "Add one invocation of COMMAND in MODE to `keyfreq-table'."
+  (let* ((key (cons mode command))
+         (count (gethash key keyfreq-table)))
+    (puthash key (if count (1+ count) 1) keyfreq-table)))
+
+(defun keyfreq--add-key (mode command keys)
+  "Add one (MODE COMMAND KEYS) event to `keyfreq-key-table'."
+  (when keyfreq-record-keys
+    (let* ((key (list mode command keys))
+           (count (gethash key keyfreq-key-table)))
+      (puthash key (if count (1+ count) 1) keyfreq-key-table))))
+
+(defun keyfreq--record-prompt (value)
+  "Count VALUE, an event read outside the command loop, then return it.
+
+Used as `:filter-return' advice on the functions that read single events,
+so that the keys of `y-or-n-p' and `query-replace' are not lost."
+  (when (and keyfreq-record-keys
+             keyfreq-record-prompts
+             (or (integerp value)
+                 (and (vectorp value) (> (length value) 0))
+                 (and (consp value) (integerp (car value)))))
+    (let ((keys (ignore-errors
+                  (key-description (if (vectorp value) value (vector value))))))
+      (when (and (stringp keys) (not (string-empty-p keys)))
+        (keyfreq--count-command major-mode keyfreq-prompt-command)
+        (keyfreq--add-key major-mode keyfreq-prompt-command keys))))
+  value)
+
+(defun keyfreq--enable-prompt-advice ()
+  "Start recording the keys that prompts read directly."
+  (unless keyfreq--prompt-advised
+    (dolist (function '(read-event read-char read-key))
+      (advice-add function :filter-return #'keyfreq--record-prompt))
+    (setq keyfreq--prompt-advised t)))
+
+(defun keyfreq--disable-prompt-advice ()
+  "Stop recording the keys that prompts read directly."
+  (when keyfreq--prompt-advised
+    (dolist (function '(read-event read-char read-key))
+      (ignore-errors (advice-remove function #'keyfreq--record-prompt)))
+    (setq keyfreq--prompt-advised nil)))
 
 (defun keyfreq-pre-command-hook ()
   "Record command execution in `keyfreq-table' hash.
@@ -230,9 +293,7 @@ aligned exactly like the command counter they accompany."
              keyfreq--last-keys
              (symbolp real-last-command)
              (not (string-empty-p keyfreq--last-keys)))
-    (let* ((key (list major-mode real-last-command keyfreq--last-keys))
-           (count (gethash key keyfreq-key-table)))
-      (puthash key (if count (1+ count) 1) keyfreq-key-table))))
+    (keyfreq--add-key major-mode real-last-command keyfreq--last-keys)))
 
 (defun keyfreq--save-keys ()
   "Write the pending `keyfreq-key-table' deltas to `keyfreq--key-file'."

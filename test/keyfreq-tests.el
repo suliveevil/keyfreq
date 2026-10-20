@@ -440,6 +440,42 @@
                   (not (file-exists-p (concat file ".keys"))))
            (delete-directory dir t)))
 
+(kf-test "提示符里直接读的键也会被记下"
+         (let ((keyfreq-record-keys t)
+               (keyfreq-record-prompts t)
+               (keyfreq-table (make-hash-table :test 'equal))
+               (keyfreq-key-table (make-hash-table :test 'equal)))
+           (with-temp-buffer
+             (setq major-mode 'org-mode)
+             (keyfreq--enable-prompt-advice)
+             (dolist (pair '((read-event . 121) (read-char . 110) (read-key . 121)))
+               (setq unread-command-events (list (cdr pair)))
+               (funcall (car pair) "p: "))
+             (keyfreq--disable-prompt-advice)
+             (kf-ok "计在 keyfreq-prompt 名下"
+                    (= 3 (gethash (cons 'org-mode 'keyfreq-prompt)
+                                  keyfreq-table)))
+             (kf-ok "y 记了两次"
+                    (= 2 (gethash (list 'org-mode 'keyfreq-prompt "y")
+                                  keyfreq-key-table)))
+             (kf-ok "n 记了一次"
+                    (= 1 (gethash (list 'org-mode 'keyfreq-prompt "n")
+                                  keyfreq-key-table))))))
+
+(kf-test "关掉后不再记录提示符按键"
+         (let ((keyfreq-record-keys t)
+               (keyfreq-record-prompts t)
+               (keyfreq-table (make-hash-table :test 'equal))
+               (keyfreq-key-table (make-hash-table :test 'equal)))
+           (with-temp-buffer
+             (setq major-mode 'org-mode)
+             (keyfreq--enable-prompt-advice)
+             (keyfreq--disable-prompt-advice)
+             (setq unread-command-events (list ?y))
+             (read-event "p: ")
+             (kf-ok "没有记录"
+                    (zerop (hash-table-count keyfreq-table))))))
+
 (princ (format "\n----------------------------------------\n%d passed, %d failed\n"
                kf-pass kf-fail))
 (delete-directory kf-tmp t)
