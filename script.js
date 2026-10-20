@@ -15,12 +15,12 @@
        the data is keyed on; these are only what gets drawn. */
     var KEY_LABEL = {
         "ESC": "esc",
-        "TAB": "tab",
-        "CAPSLOCK": "caps",
-        "backspace": "delete",
-        "RET": "return",
-        "S": "shift",
-        "RSHIFT": "shift",
+        "TAB": "\u21e5",
+        "CAPSLOCK": "\u21ea",
+        "backspace": "\u232b",
+        "RET": "\u21a9",
+        "S": "\u21e7",
+        "RSHIFT": "\u21e7",
         "SPC": "space",
         "C": "\u2303",
         "M": "\u2325",
@@ -362,7 +362,9 @@
             fitFont(ctx, key.name[1], room, Math.round(unit * 0.40));
             ctx.fillText(key.name[1], x + pad, y + h - pad);
         } else {
-            var text = KEY_LABEL[key.name[0]] || key.name[0];
+            var name = key.name[0];
+            var text = KEY_LABEL[name] ||
+                (/^[a-z]$/.test(name) ? name.toUpperCase() : name);
             ctx.textAlign = "center";
             ctx.textBaseline = "middle";
             fitFont(ctx, text, room, Math.round(unit * 0.30));

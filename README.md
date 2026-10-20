@@ -39,8 +39,9 @@ One canvas, four controls and no page-level clutter:
   found in the git history of `keyfreq-file`, and `All time` (the default).
 * **Hover** -- shows the key, the number of presses and its share.
 * **Key caps** -- drawn the way a MacBook Air prints them: the shifted symbol
-  above the base one (`:` over `;`, `!` over `1`), and `⌃` `⌥` `⌘` for
-  Control, Option and Command.  Both legends of a cap are the same physical
+  above the base one (`:` over `;`, `!` over `1`), letters in upper case, and
+  the Apple glyphs `⌃` `⌥` `⌘` `⇧` `⇥` `⇪` `⌫` `↩` for Control, Option,
+  Command, Shift, Tab, Caps Lock, Delete and Return.  Both legends of a cap are the same physical
   key, so their presses are added together and either one can be hovered or
   clicked.
 * **Click** -- focuses a key: it is outlined, the keys it is used with (a
