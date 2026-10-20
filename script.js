@@ -344,6 +344,10 @@
         var surface = dark ? "#26262a" : "#eceef1";
         var ink = dark ? "#e8e8ea" : "#1d1d1f";
         var muted = dark ? "#9a9aa0" : "#6b6b70";
+        /* a key that is out of focus: shape only, no heat */
+        var mutedSurface = dark ? "#1e1e21" : "#f4f4f6";
+        var mutedEdge = dark ? "rgba(255,255,255,.05)" : "rgba(0,0,0,.05)";
+        var mutedInk = dark ? "#55555b" : "#c2c2c8";
         var edge = dark ? "rgba(255,255,255,.10)" : "rgba(0,0,0,.10)";
 
         keyBoxes = [];
@@ -360,33 +364,34 @@
             var t = applyScale(value, max, scaleMode);
             var rgb = heatRGB(t);
             var hot = t > 0.02;
-            /* with a key focused, only that key and the keys it is used
-               with are drawn at all */
-            if (focus && focus !== key.name[0] &&
-                !(related && related[key.name[0]])) {
-                return;
-            }
+            var isFocus = focus && focus === key.name[0];
+            /* a key that has nothing to do with the focused one keeps its
+               shape but loses its heat, so the map stays readable */
+            var muted = !!focus && !isFocus &&
+                !(related && related[key.name[0]]);
 
             /* key cap: soft shadow, rounded, subtle border */
             ctx.save();
-            ctx.shadowColor = dark ? "rgba(0,0,0,.55)" : "rgba(0,0,0,.10)";
-            ctx.shadowBlur = 3;
-            ctx.shadowOffsetY = 1;
-            ctx.fillStyle = hot
-                ? "rgb(" + rgb[0] + "," + rgb[1] + "," + rgb[2] + ")"
-                : surface;
+            if (!muted) {
+                ctx.shadowColor = dark ? "rgba(0,0,0,.55)" : "rgba(0,0,0,.10)";
+                ctx.shadowBlur = 3;
+                ctx.shadowOffsetY = 1;
+            }
+            ctx.fillStyle = muted || !hot
+                ? (muted ? mutedSurface : surface)
+                : "rgb(" + rgb[0] + "," + rgb[1] + "," + rgb[2] + ")";
             roundRect(ctx, x, y, w, h, RADIUS);
             ctx.fill();
             ctx.restore();
 
-            var isFocus = focus && focus === key.name[0];
-            ctx.strokeStyle = isFocus ? "#cb0000" : (hot ? "rgba(0,0,0,.12)" : edge);
+            ctx.strokeStyle = isFocus ? "#cb0000"
+                : (muted ? mutedEdge : (hot ? "rgba(0,0,0,.12)" : edge));
             ctx.lineWidth = isFocus ? 2 : 1;
             roundRect(ctx, x + 0.5, y + 0.5, w - 1, h - 1, RADIUS - 0.5);
             ctx.stroke();
 
             /* label: dark on light keys, white once the key is hot */
-            ctx.fillStyle = hot && t > 0.55 ? "#fff" : ink;
+            ctx.fillStyle = muted ? mutedInk : (hot && t > 0.55 ? "#fff" : ink);
             var label = key.name[0];
             var tw = ctx.measureText(label).width;
             ctx.fillText(label, x + (w - tw) / 2, y + h / 2 + 0.5);
