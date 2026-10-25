@@ -125,23 +125,6 @@
     var LEGEND_W = 2.5;                 // keys of horizontal room for the scale
     var MODIFIERS = ["C", "S", "M", "G", "s"];
 
-    /* Blue -> cyan -> green -> yellow -> red, matching the old scale. */
-    function heatColor(value, opacity) {
-        var x = Math.max(0, Math.min(1, value)) * 255;
-        var r, g, b;
-        if (x < 64) {
-            r = 0; g = x * 4; b = 255;
-        } else if (x < 128) {
-            r = 0; g = 255; b = 255 - (x - 64) * 4;
-        } else if (x < 192) {
-            r = (x - 128) * 4; g = 255; b = 0;
-        } else {
-            r = 255; g = 256 - (x - 191) * 4; b = 0;
-        }
-        return "rgba(" + Math.round(r) + "," + Math.round(g) + "," +
-            Math.round(b) + "," + opacity + ")";
-    }
-
     /* "C-x C-s", "<menu-bar> <file>" and the like. */
     function splitShortcut(text) {
         return String(text || "")
@@ -235,27 +218,6 @@
         return out;
     }
 
-    function keyFrequency(table, skip) {
-        var freq = Object.create(null);
-        var cells = table.querySelectorAll("td[data-count]");
-        for (var i = 0; i < cells.length; i++) {
-            var count = parseInt(cells[i].getAttribute("data-count"), 10);
-            if (!count) continue;
-            var binding = firstBinding(cells[i].textContent);
-            if (!binding) continue;
-            var keys = shortcutKeys(binding);
-            var counted = Object.create(null);
-            for (var k = 0; k < keys.length; k++) {
-                var key = keys[k];
-                if (skip.indexOf(key) >= 0) continue;
-                if (counted[key]) continue;       // once per command
-                counted[key] = true;
-                freq[key] = (freq[key] || 0) + count;
-            }
-        }
-        return freq;
-    }
-
     function mapsToKey(name) {
         for (var i = 0; i < LAYOUT.length; i++) {
             if (LAYOUT[i].name.indexOf(name) >= 0) return true;
@@ -309,26 +271,6 @@
             });
         }
         return items;
-    }
-
-    function keyBag(items, skip) {
-        var bag = Object.create(null);
-        for (var i = 0; i < items.length; i++) {
-            var item = items[i];
-            if (!item.count) continue;
-            var binding = firstBinding(item.text);
-            if (!binding) continue;
-            var keys = shortcutKeys(binding);
-            var seen = Object.create(null);
-            for (var k = 0; k < keys.length; k++) {
-                var key = keys[k];
-                if (seen[key] || skip.indexOf(key) >= 0) continue;
-                if (!mapsToKey(key)) continue;
-                seen[key] = true;
-                bag[key] = (bag[key] || 0) + item.count;
-            }
-        }
-        return bag;
     }
 
     /* ---------- drawing ---------- */
