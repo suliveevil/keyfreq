@@ -58,8 +58,6 @@
 (unless (fboundp 'keyfreq--html-escape)
   (error "keyfreq.el did not load from %s" kfh-el))
 
-(setq keyfreq-folder (directory-file-name kfh-here))
-(setq keyfreq-folder (file-name-directory (directory-file-name kfh-here)))
 (setq keyfreq-folder (expand-file-name ".." kfh-here))
 
 (kfh-test "escaping helpers"

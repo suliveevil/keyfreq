@@ -13,7 +13,6 @@
 (defvar kf-pass 0)
 (defvar kf-fail 0)
 (defvar kf-failures nil)
-(defvar kf-here (file-name-directory (or load-file-name buffer-file-name)))
 (defvar kf-el (expand-file-name "../keyfreq.el"
                               (file-name-directory
                                (expand-file-name (or load-file-name buffer-file-name)))))
@@ -475,6 +474,92 @@
              (read-event "p: ")
              (kf-ok "没有记录"
                     (zerop (hash-table-count keyfreq-table))))))
+
+(kf-test "关掉 keyfreq-mode 会一并卸下提示符 advice"
+         (let ((keyfreq-record-prompts t)
+               (keyfreq-table (make-hash-table :test 'equal))
+               (keyfreq-key-table (make-hash-table :test 'equal)))
+           (with-temp-buffer
+             (setq major-mode 'org-mode)
+             (keyfreq-mode 1)
+             (kf-ok "开启时 advice 已装上" keyfreq--prompt-advised)
+             (keyfreq-mode 0)
+             (kf-ok "关闭时 advice 已卸下" (not keyfreq--prompt-advised))
+             (setq unread-command-events (list ?y))
+             (read-event "p: ")
+             (kf-ok "没有记录" (zerop (hash-table-count keyfreq-table))))))
+
+(kf-test "reset 会同时清掉按键文件与日归档"
+         (let* ((dir (make-temp-file "keyfreq-reset-" t))
+                (file (expand-file-name "keyfreq-log" dir))
+                (keyfreq-file file)
+                (keyfreq-file-lock (concat file ".lock"))
+                (keyfreq-daily-directory (expand-file-name "days" dir))
+                (keyfreq-key-file nil)
+                (keyfreq-table (make-hash-table :test 'equal))
+                (keyfreq-key-table (make-hash-table :test 'equal)))
+           (setq keyfreq--rollup-dirty nil)
+           (with-temp-file file (insert "(((org-mode . cmd-0) . 5))"))
+           (with-temp-file (concat file ".keys")
+             (insert "(((org-mode cmd-0 \"RET\") . 2))"))
+           (make-directory (keyfreq--daily-dir) t)
+           (with-temp-file (keyfreq--daily-file)
+             (insert "(((org-mode . cmd-0) . 3))"))
+           (with-temp-file (keyfreq--daily-baseline)
+             (insert "(((org-mode . cmd-0) . 2))"))
+           (cl-letf (((symbol-function 'yes-or-no-p) (lambda (&rest _) t)))
+             (keyfreq-reset))
+           (kf-ok "汇总文件已删除" (not (file-exists-p keyfreq-file)))
+           (kf-ok "按键文件已删除" (not (file-exists-p (concat file ".keys"))))
+           (kf-ok "日归档目录已删除" (not (file-directory-p (keyfreq--daily-dir))))
+           (kf-ok "命令表已清空" (zerop (hash-table-count keyfreq-table)))
+           (kf-ok "按键表已清空" (zerop (hash-table-count keyfreq-key-table)))
+           (delete-directory dir t)))
+
+(kf-test "损坏的按键文件会被备份并重写，而不是永远失败"
+         (let* ((dir (make-temp-file "keyfreq-keysbad-" t))
+                (file (expand-file-name "keyfreq-log" dir))
+                (keyfreq-file file)
+                (keyfreq-file-lock (concat file ".lock"))
+                (keyfreq-record-keys t)
+                (keyfreq-key-file nil)
+                (keyfreq-key-table (make-hash-table :test 'equal)))
+           (setq keyfreq--rollup-dirty nil)
+           (with-temp-file file (insert "()"))
+           (with-temp-file (concat file ".keys") (insert "not-a-list"))
+           (setq major-mode 'org-mode
+                 real-last-command 'org-return
+                 keyfreq--last-keys "RET")
+           (keyfreq--record-keys)
+           (keyfreq-table-save (kf-make-table '((org-mode org-return 1))) t)
+           (kf-ok "按键文件恢复可读"
+                  (= 1 (gethash (list 'org-mode 'org-return "RET")
+                                (keyfreq--read-file-entries
+                                 (concat file ".keys")))))
+           (kf-ok "损坏的按键文件留有备份"
+                  (consp (directory-files
+                          (file-name-directory file) t
+                          (concat (regexp-quote
+                                   (file-name-nondirectory
+                                    (concat file ".keys")))
+                                  "\\.corrupt"))))
+           (delete-directory dir t)))
+
+(kf-test "mustsave 遇到活锁会按时放弃，不再无限等待"
+         (let* ((file (kf-fixture))
+                (table (kf-make-table '((org-mode cmd-0 5))))
+                (keyfreq-file file)
+                (keyfreq-file-lock (concat file ".lock"))
+                (holder (start-process "keyfreq-test-lock" nil "sleep" "5")))
+           (write-region (number-to-string (process-id holder))
+                         nil keyfreq-file-lock nil 'nomessage)
+           (let ((keyfreq-lock-retries 2))
+             (keyfreq-table-save table t))
+           (kf-ok "增量保留在内存里" (= 5 (gethash '(org-mode . cmd-0) table)))
+           (kf-ok "文件没有被改动" (= 1 (kf-get file '(org-mode . cmd-0))))
+           (delete-process holder)
+           (ignore-errors (delete-file keyfreq-file-lock))
+           (delete-file file)))
 
 (princ (format "\n----------------------------------------\n%d passed, %d failed\n"
                kf-pass kf-fail))
