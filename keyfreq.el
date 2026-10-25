@@ -1,5 +1,4 @@
-;;; keyfreq.el --- track command frequencies
-;; -*- coding: utf-8 -*-
+;;; keyfreq.el --- track command frequencies -*- coding: utf-8; lexical-binding: t; -*-
 ;;
 ;; Copyright 2009-2010, 2015 by David Capello
 ;; Copyright 2008 by Xah Lee
@@ -86,13 +85,8 @@
 ;;
 ;;; Code:
 
-(if (not (featurep 'cl-lib))
-    (progn
-      (require 'cl)
-      ;; fix conflict name
-      (defalias 'cl-reduce 'reduce))
-  (require 'cl-lib))
-;; (require 'json)?
+(require 'cl-lib)
+(require 'json)
 
 (defgroup keyfreq nil
   "Customization group for Keyfreq mode.
@@ -101,6 +95,17 @@ provides it as a statistical data."
   :package-version '(keyfreq . "1.7")
   :group 'local
   :prefix "keyfreq")
+
+(defcustom keyfreq-record-prompts t
+  "When non-nil, also record the keys that prompts read directly.
+
+Commands such as `query-replace' read their per-hit keys outside the
+command loop, so `pre-command-hook' never sees them.  Advising
+`read-event', `read-char' and `read-key' recovers them.  Because no real
+command runs for those keys they are counted under the pseudo command
+`keyfreq-prompt', which `keyfreq-excluded-commands' can exclude in turn."
+  :group 'keyfreq
+  :type 'boolean)
 
 ;;;###autoload
 (define-minor-mode keyfreq-mode
@@ -147,7 +152,16 @@ by default."
 (defcustom keyfreq-excluded-regexp '()
   "List of commands in REGEXP-FORM excluded by keyfreq."
   :group 'keyfreq
-  :type 'file)
+  :type '(repeat string))
+
+(defcustom keyfreq-coding-system nil
+  "Coding system used to read and write `keyfreq-file'.
+Nil means detect it from the file, which is the safe default: an
+existing file keeps its original encoding instead of being
+re-encoded behind the user's back."
+  :group 'keyfreq
+  :type '(choice (const :tag "Detect from the file" nil)
+                 coding-system))
 
 (defvar keyfreq-table (make-hash-table :test 'equal :size 128)
   "Hash table storing number of times each command was called in each major mode
@@ -156,26 +170,25 @@ since the last time the frequencies were saved in `keyfreq-file'.")
 (defvar keyfreq-excluded-commands '()
   "List of commands excluded by keyfreq.")
 
+(defvar keyfreq--excluded-filter nil
+  "Cached regexp built from `keyfreq-excluded-regexp'.")
+(defvar keyfreq--excluded-filter-for 'keyfreq--unset
+  "The value of `keyfreq-excluded-regexp' the filter was built from.")
+
 (defun keyfreq-match-p (cmd)
-  "Return t if CMD in `keyfreq-excluded-commands' or match `keyfreq-excluded-regexp'."
+  "Return t if CMD is in `keyfreq-excluded-commands'
+or matches `keyfreq-excluded-regexp'."
   ;; HACK Inspire by `consult--regexp-filter'
-  (let ((filter (mapconcat (lambda (x) (concat "\\(?:" x "\\)"))
-                           keyfreq-excluded-regexp "\\|")))
-    (or (memq cmd keyfreq-excluded-commands)
-        (when keyfreq-excluded-regexp
-          (string-match-p filter (symbol-name cmd))))))
+  (or (memq cmd keyfreq-excluded-commands)
+      (when keyfreq-excluded-regexp
+        ;; this runs on every keystroke, so the filter is cached
+        (unless (eq keyfreq--excluded-filter-for keyfreq-excluded-regexp)
+          (setq keyfreq--excluded-filter
+                (mapconcat (lambda (x) (concat "\\(?:" x "\\)"))
+                           keyfreq-excluded-regexp "\\|")
+                keyfreq--excluded-filter-for keyfreq-excluded-regexp))
+        (string-match-p keyfreq--excluded-filter (symbol-name cmd)))))
 
-
-(defcustom keyfreq-record-prompts t
-  "When non-nil, also record the keys that prompts read directly.
-
-Commands such as `query-replace' read their per-hit keys outside the
-command loop, so `pre-command-hook' never sees them.  Advising
-`read-event', `read-char' and `read-key' recovers them.  Because no real
-command runs for those keys they are counted under the pseudo command
-`keyfreq-prompt', which `keyfreq-excluded-commands' can exclude in turn."
-  :group 'keyfreq
-  :type 'boolean)
 
 (defconst keyfreq-prompt-command 'keyfreq-prompt
   "Pseudo command standing for keys read outside the command loop.")
@@ -188,6 +201,30 @@ command runs for those keys they are counted under the pseudo command
   (let* ((key (cons mode command))
          (count (gethash key keyfreq-table)))
     (puthash key (if count (1+ count) 1) keyfreq-table)))
+
+(defcustom keyfreq-record-keys t
+  "When non-nil, record the key sequence that invoked each command.
+
+`keyfreq' counts commands and resolves their keys later with
+`where-is-internal', which cannot tell which of two bindings was
+actually used and cannot tell which character was typed (every typed
+character is the single command `self-insert-command').  Recording
+`this-command-keys' at invocation time gives the exact key; it is kept
+in a side file so the existing counters keep working unchanged."
+  :group 'keyfreq
+  :type 'boolean)
+
+(defcustom keyfreq-key-file nil
+  "File recording the keys that invoked each command.
+Nil means `keyfreq-file' with `.keys' appended."
+  :group 'keyfreq
+  :type '(choice (const :tag "Derive from keyfreq-file" nil) file))
+
+(defvar keyfreq-key-table (make-hash-table :test 'equal)
+  "Pending key counts, keyed by (MAJOR-MODE COMMAND KEY-DESCRIPTION).")
+
+(defvar keyfreq--last-keys nil
+  "Key description of the invocation that is about to be recorded.")
 
 (defun keyfreq--add-key (mode command keys)
   "Add one (MODE COMMAND KEYS) event to `keyfreq-key-table'."
@@ -247,30 +284,6 @@ Also counts the key sequence that invoked the command when
 ;;; ------------------------------------------------------------------
 ;;; Recorded keys
 ;;; ------------------------------------------------------------------
-
-(defcustom keyfreq-record-keys t
-  "When non-nil, record the key sequence that invoked each command.
-
-`keyfreq' counts commands and resolves their keys later with
-`where-is-internal', which cannot tell which of two bindings was
-actually used and cannot tell which character was typed (every typed
-character is the single command `self-insert-command').  Recording
-`this-command-keys' at invocation time gives the exact key; it is kept
-in a side file so the existing counters keep working unchanged."
-  :group 'keyfreq
-  :type 'boolean)
-
-(defcustom keyfreq-key-file nil
-  "File recording the keys that invoked each command.
-Nil means `keyfreq-file' with `.keys' appended."
-  :group 'keyfreq
-  :type '(choice (const :tag "Derive from keyfreq-file" nil) file))
-
-(defvar keyfreq-key-table (make-hash-table :test 'equal)
-  "Pending key counts, keyed by (MAJOR-MODE COMMAND KEY-DESCRIPTION).")
-
-(defvar keyfreq--last-keys nil
-  "Key description of the invocation that is about to be recorded.")
 
 (defun keyfreq--key-file ()
   "Return the file holding the recorded keys."
@@ -352,14 +365,14 @@ COUNTER as value."
     new-table))
 
 
-(defun keyfreq-filter-major-mode (table major-mode)
-  "Leave the frequencies of the specified major mode.
+(defun keyfreq-filter-major-mode (table mode)
+  "Leave the frequencies of the specified major MODE.
 Return a hash table where each entry has COMMAND as key and
 COUNTER as value."
 
   (let ((new-table (make-hash-table :test 'equal :size 128)))
     (maphash (lambda (k v)
-	       (when (eq (car k) major-mode)
+	       (when (eq (car k) mode)
 		 (puthash (cdr k) (+ (gethash (cdr k) new-table 0) v) new-table)))
 	     table)
     new-table))
@@ -368,11 +381,14 @@ COUNTER as value."
 (defun keyfreq-used-major-modes (table)
   "Return a list with the used major modes (major modes
 contained in the TABLE)."
-  (let ((list))
-    (maphash (lambda (k v)
-	       (add-to-list 'list (car k)))
-	     table)
-    list))
+  (let ((seen (make-hash-table :test 'eq))
+        (modes nil))
+    (maphash (lambda (k _v)
+               (unless (gethash (car k) seen)
+                 (puthash (car k) t seen)
+                 (push (car k) modes)))
+             table)
+    modes))
 
 
 (defun keyfreq-list (table &optional reverse limit)
@@ -391,7 +407,7 @@ which were used less then -LIMIT times will be added."
      (cond
       ((or (not (numberp limit)) (= limit 0))
        (lambda (k v) (setq l (cons (cons k v) l) sum (+ sum v))))
-      ((= limit -1) (lambda (k v) (setq sum (+ sum v))))
+      ((= limit -1) (lambda (_k v) (setq sum (+ sum v))))
       ((< limit 0)
        (setq limit (- limit))
        (lambda (k v) (setq sum (+ sum v))
@@ -414,7 +430,7 @@ The LIST is the `keyfreq-table' converted to a list using the `keyfreq-list'.
 
 If FUNC is nil each line contains number of times command was
 called and the command; if it is t percentage usage is added in
-the middle; if it is 'raw each line will contain number an
+the middle; if it is \='raw each line will contain number an
 command separated by single line (with no formatting) otherwise
 FUNC must be a function returning a string which will be called
 for each entry with three arguments: number of times command was
@@ -443,7 +459,7 @@ called, percentage usage and the command."
 KEYMAPS defaults to the global keymap.  To also see a mode's own
 bindings pass its keymap, e.g.
 
-  (keyfreq-where-is 'org-return (keyfreq--mode-keymap 'org-mode))
+  (keyfreq-where-is \\='org-return (keyfreq--mode-keymap \\='org-mode))
 
 Since Emacs 30 `where-is-internal' takes (DEFINITION KEYMAP FIRSTONLY
 NOINDIRECT); a non-nil KEYMAP means `search this keymap and the global
@@ -452,21 +468,21 @@ keymap'."
              (where-is-internal command (or keymaps (list global-map)))
              ", "))
 
-(defun keyfreq--mode-keymap (major-mode)
-  "Return MAJOR-MODE's own keymap when it follows the `<mode>-map' convention."
-  (let ((symbol (intern (concat (symbol-name major-mode) "-map"))))
+(defun keyfreq--mode-keymap (mode)
+  "Return MODE's own keymap when it follows the `<mode>-map' convention."
+  (let ((symbol (intern (concat (symbol-name mode) "-map"))))
     (and (boundp symbol)
          (keymapp (symbol-value symbol))
          (symbol-value symbol))))
 
-(defun keyfreq--mode-keymaps (major-mode)
-  "Return the keymap to resolve MAJOR-MODE's bindings in.
+(defun keyfreq--mode-keymaps (mode)
+  "Return the keymap to resolve MODE's bindings in.
 
 Major modes bind most of their commands in their own keymap rather than
 in `global-map'; resolving against `global-map' alone silently drops
 them (for `org-mode' that was 42% of all key presses).  Falls back to
 `global-map' when the mode has no `<mode>-map'."
-  (or (keyfreq--mode-keymap major-mode) (list global-map)))
+  (or (keyfreq--mode-keymap mode) (list global-map)))
 
 (defun keyfreq-show (&optional major-mode-symbol)
   "Show command usage statistics in `keyfreq-buffer'.
@@ -656,7 +672,6 @@ the indexes point into NAMES."
 
 (defun keyfreq--json-quoted (string)
   "Return STRING as a JSON string literal."
-  (require (quote json))
   (json-encode-string string))
 
 (defun keyfreq--json-history-1 (periods names rows)
@@ -1013,8 +1028,8 @@ Return (PER-MODE . UNION)."
 SHORTCUT is a function that maps a command to its already escaped
 keystroke description.  KEYS maps a command to a `data-keys' attribute
 carrying the exact per-key counts, or nil when they were not recorded.
-(The argument is not called KEYS: `keyfreq.el' is dynamically bound, so it
-would capture the caller's `keys' variable.)"
+(The argument is not called KEYS, to avoid confusion with the recorded
+keys.)"
   (insert "<table>\n")
   (insert "<colgroup><col style=\"width:10%\"><col style=\"width:9%\">"
           "<col><col style=\"width:42%\"></colgroup>\n")
@@ -1219,18 +1234,16 @@ Interactively, use a prefix argument to choose FILENAME."
 
 (defun keyfreq-json-encode (table)
   "Return a JSON representation of the table of frequencies."
-  (require 'json)
   (let ((commands-indexes (make-hash-table :test 'equal :size 128))
 	commands-list frequencies-matrix i)
 
     ;; Build the "commands" property of the JSON object.
     (setq i 0)
     (maphash
-     (lambda (command-symbol counter)
-       (add-to-list 'commands-list command-symbol t)
+     (lambda (command-symbol _counter)
+       (setq commands-list (append commands-list (list command-symbol)))
        (puthash command-symbol i commands-indexes)
-       (setq i (+ i 1))
-       )
+       (setq i (+ i 1)))
      (keyfreq-groups-major-modes table))
 
     ;; Build the "frequencies" property.
@@ -1238,11 +1251,17 @@ Interactively, use a prefix argument to choose FILENAME."
      (lambda (major-mode-symbol)
        (let ((cmd-count-pairs '()))
 	 (keyfreq-format-list (keyfreq-list (keyfreq-filter-major-mode table major-mode-symbol))
-			      (lambda (count perc command)
-				(add-to-list 'cmd-count-pairs (gethash command commands-indexes) t)
-				(add-to-list 'cmd-count-pairs count t)))
-	 (add-to-list 'frequencies-matrix major-mode-symbol t)
-	 (add-to-list 'frequencies-matrix (append cmd-count-pairs nil) t)))
+			      (lambda (count _perc command)
+				(let ((index (gethash command commands-indexes)))
+				  (unless (member index cmd-count-pairs)
+				    (setq cmd-count-pairs
+					  (append cmd-count-pairs (list index))))
+				  (unless (member count cmd-count-pairs)
+				    (setq cmd-count-pairs
+					  (append cmd-count-pairs (list count)))))))
+	 (setq frequencies-matrix (append frequencies-matrix (list major-mode-symbol)))
+	 (setq frequencies-matrix
+	       (append frequencies-matrix (list (append cmd-count-pairs nil))))))
      (keyfreq-used-major-modes table))
 
     (json-encode `((:format . 1)
@@ -1365,15 +1384,6 @@ If nil, or if the file cannot be read as a keyfreq list, the
 whole file is regenerated from scratch (the pre-1.8 behaviour)."
   :group 'keyfreq
   :type 'boolean)
-
-(defcustom keyfreq-coding-system nil
-  "Coding system used to read and write `keyfreq-file'.
-Nil means detect it from the file, which is the safe default: an
-existing file keeps its original encoding instead of being
-re-encoded behind the user's back."
-  :group 'keyfreq
-  :type '(choice (const :tag "Detect from the file" nil)
-                 coding-system))
 
 (defvar keyfreq--corrupt-backup nil
   "Backup file created by the last `keyfreq-table-load' call, if any.")
@@ -1823,6 +1833,16 @@ backup that was created, if any."
                      table)))))))
 
 
+(defcustom keyfreq-autosave-timeout 600
+  "How often in seconds `keyfreq-table' should be saved
+when `keyfreq-autosave-mode' is enabled.  Setting this
+value will take effect only after (re)enabling
+`keyfreq-autosave-mode'."
+  :group 'keyfreq
+  :type 'number)
+
+(defvar keyfreq-autosave--timer nil)
+
 ;;;###autoload
 (define-minor-mode keyfreq-autosave-mode
   "Keyfreq Autosave mode automatically saves
@@ -1846,18 +1866,6 @@ and when emacs is killed."
 	(add-hook 'kill-emacs-hook 'keyfreq-mustsave--do))
     (keyfreq-mustsave--do)
     (remove-hook 'kill-emacs-hook 'keyfreq-mustsave--do)))
-
-
-(defcustom keyfreq-autosave-timeout 600
-  "How often in seconds `keyfreq-table' should be saved
-when `keyfreq-autosave-mode' is enabled.  Setting this
-value will take effect only after (re)enabling
-`keyfreq-autosave-mode'."
-  :group 'keyfreq
-  :type 'number)
-
-
-(defvar keyfreq-autosave--timer nil)
 
 
 (defun keyfreq-autosave--do ()
