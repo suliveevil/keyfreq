@@ -117,7 +117,8 @@ various keyfreq-* functions."
       (progn
         (add-hook 'pre-command-hook 'keyfreq-pre-command-hook)
         (when keyfreq-record-prompts (keyfreq--enable-prompt-advice)))
-    (remove-hook 'pre-command-hook 'keyfreq-pre-command-hook)))
+    (remove-hook 'pre-command-hook 'keyfreq-pre-command-hook)
+    (keyfreq--disable-prompt-advice)))
 
 
 (defcustom keyfreq-buffer "*frequencies*"
@@ -311,7 +312,19 @@ aligned exactly like the command counter they accompany."
         (let ((file (keyfreq--key-file)))
           (if (and (file-exists-p file)
                    (> (file-attribute-size (file-attributes file)) 0))
-              (keyfreq--merge-in-place pending file)
+              (condition-case err
+                  (keyfreq--merge-in-place pending file)
+                ;; as with the rollup, a file we cannot patch in place is
+                ;; backed up and rewritten, or every later save would fail
+                (error
+                 (message "keyfreq: cannot merge into %s (%s); rewriting it"
+                          file (error-message-string err))
+                 (ignore-errors (keyfreq--backup-file file))
+                 (let ((merged (copy-hash-table pending)))
+                   (maphash (lambda (key count)
+                              (puthash key (+ count (gethash key merged 0)) merged))
+                            (keyfreq--read-file-entries file))
+                   (keyfreq--write-table merged file))))
             (keyfreq--write-table pending file)))
         (clrhash keyfreq-key-table)))))
 
@@ -1266,23 +1279,37 @@ Interactively, use a prefix argument to choose FILENAME."
 
 
 (defun keyfreq-reset ()
-  "Reset all statistics including those in the file."
+  "Reset all statistics, including the files on disk.
+
+Deletes `keyfreq-file', the recorded keys, and the daily archives with
+their baseline, and clears both in-memory tables.  The .corrupt-*
+backups, if any, are left alone."
   (interactive)
-  (when (yes-or-no-p (concat "Delete keyfreq file? You will lose all your stats. "))
-    ;; clear the hash table
-    (clrhash keyfreq-table)
-    ;; Deal with the file
-    (when (keyfreq-file-is-unlocked)
-      ;; Lock the file
+  (when (yes-or-no-p
+         (concat
+          "Delete all keyfreq statistics?  This removes the data file, "
+          "the recorded keys and the daily archives. "))
+    (if (not (keyfreq-file-is-unlocked))
+        (message "keyfreq: %s is locked by another Emacs; nothing was deleted"
+                 keyfreq-file)
       (keyfreq-file-claim-lock)
-      ;; Check that we have the lock
-      (if (eq (keyfreq-file-owner) (emacs-pid))
-	  (unwind-protect
-	      ;; if the file exists just delete it
-	      (if (file-exists-p keyfreq-file)
-		  (delete-file keyfreq-file))
-	    ;; Release the lock.
-	    (keyfreq-file-release-lock))))))
+      (if (not (eq (keyfreq-file-owner) (emacs-pid)))
+          (message "keyfreq: could not lock %s; nothing was deleted"
+                   keyfreq-file)
+        (unwind-protect
+            (progn
+              (clrhash keyfreq-table)
+              (clrhash keyfreq-key-table)
+              (when (file-exists-p keyfreq-file)
+                (delete-file keyfreq-file))
+              (let ((keys (keyfreq--key-file)))
+                (when (file-exists-p keys)
+                  (delete-file keys)))
+              (let ((dir (keyfreq--daily-dir)))
+                (when (file-directory-p dir)
+                  (delete-directory dir t)))
+              (setq keyfreq--rollup-dirty nil))
+          (keyfreq-file-release-lock))))))
 
 
 (defun keyfreq-file-owner ()
@@ -1625,6 +1652,17 @@ without losing or duplicating counters."
               (setq keyfreq--rollup-dirty (expand-file-name keyfreq-file)))
             ok)))))))
 
+(defcustom keyfreq-lock-retries 50
+  "How many 0.1 second waits a mandatory save does on a locked file.
+
+A mandatory save (when Emacs quits, or `keyfreq-save-now') waits for
+the other Emacs to release the lock; after this many waits it gives
+up and leaves the new counts in memory, to be saved by the next
+autosave.  Bounding the wait keeps Emacs from hanging on quit when
+another instance never lets go."
+  :group 'keyfreq
+  :type 'integer)
+
 (defun keyfreq-table-save (table &optional mustsave)
   "Append all values from the specified TABLE into the
 `keyfreq-file' as a sexp of an alist.  Then resets the TABLE
@@ -1636,13 +1674,16 @@ entries are appended right before the closing parenthesis.  Bind
 `keyfreq-incremental-save' to nil to regenerate the whole file
 instead.
 
-If MUSTSAVE is t, this function tries to save the table until it
-gets the lock and successfully saves it.  If MUSTSAVE is nil, it
-does nothing if the table cannot be saved."
+If MUSTSAVE is t, this function waits for the lock for up to
+`keyfreq-lock-retries' tenths of a second and saves once it gets
+it.  If the lock does not free up in time, TABLE is left untouched
+and the next save retries.  If MUSTSAVE is nil, it does nothing if
+the table cannot be saved."
 
   ;; Avoid adding nothing to the file
   (unless (zerop (hash-table-count table))
-    (let ((done nil))
+    (let ((done nil)
+          (attempts 0))
       ;; Check that the lock file doesn't exist
       (while (not done)
         (if (not (keyfreq-file-is-unlocked))
@@ -1659,8 +1700,14 @@ does nothing if the table cannot be saved."
                   (setq done t))
               (keyfreq-file-release-lock))))
         (when (and (not done) mustsave)
-          ;; We must save right now, so keep trying to get the lock.
-          (sleep-for 0.1))))))
+          ;; We must save right now, so keep trying to get the lock --
+          ;; but never for ever: quitting Emacs must not hang here.
+          (setq attempts (1+ attempts))
+          (if (< attempts keyfreq-lock-retries)
+              (sleep-for 0.1)
+            (message "keyfreq: %s stayed locked; the new counts stay in memory"
+                     keyfreq-file)
+            (setq done t)))))))
 
 (defun keyfreq-sort-file (&optional filename)
   "Rewrite FILENAME (default `keyfreq-file') with entries sorted by key.
@@ -1710,15 +1757,16 @@ in-place updates produce minimal, line-aligned diffs."
           (keyfreq-file-release-lock))))))
 
 
-(defun keyfreq--backup-file ()
-  "Copy `keyfreq-file' aside and return the backup name."
-  (let* ((base (concat keyfreq-file ".corrupt-"
+(defun keyfreq--backup-file (&optional file)
+  "Copy FILE (default `keyfreq-file') aside and return the backup name."
+  (let* ((source (or file keyfreq-file))
+         (base (concat source ".corrupt-"
                        (format-time-string "%Y%m%d-%H%M%S")))
          (name base)
          (i 1))
     (while (file-exists-p name)
       (setq name (format "%s-%d" base (setq i (1+ i)))))
-    (copy-file keyfreq-file name t)
+    (copy-file source name t)
     name))
 
 (defun keyfreq-table-load (table)
