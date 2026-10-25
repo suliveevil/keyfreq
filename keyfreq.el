@@ -507,13 +507,16 @@ heat map looked like back then."
           (buffer-string))))))
 
 (defun keyfreq--git-repo (file)
-  "Return (REPO . RELATIVE-PATH) for FILE when it lives in a git work tree."
-  (let* ((target (expand-file-name file))
+  "Return (REPO . RELATIVE-PATH) for FILE when it lives in a git work tree.
+Both paths are truenames, so a symlinked directory (such as /tmp on
+macOS) does not break the relative path git is asked about."
+  (let* ((target (file-truename (expand-file-name file)))
          (dir (file-name-directory target))
          (top (ignore-errors
                 (string-trim
                  (or (keyfreq--git dir "rev-parse" "--show-toplevel") "")))))
     (when (and (not (string-empty-p top)) (file-directory-p top))
+      (setq top (file-truename top))
       (cons top (file-relative-name target top)))))
 
 (defun keyfreq--read-log-entries (text)
@@ -531,23 +534,40 @@ heat map looked like back then."
     table))
 
 (defun keyfreq--git-versions (file)
-  "Return (DATE . TEXT) pairs for each commit of FILE, oldest first."
+  "Return (DATE . TEXT) pairs for FILE, one per month, oldest first.
+
+Only the newest commit of each month is materialised: the snapshots
+look at one version per month anyway, and this keeps the number of
+`git show' calls proportional to the months covered instead of the
+number of commits."
   (let* ((repo (keyfreq--git-repo file))
          (repo-dir (car-safe repo))
          (relative (cdr-safe repo)))
     (when repo-dir
       (let ((log (keyfreq--git repo-dir "log" "--format=%h%x09%ad"
                                "--date=short" "--follow" "--" relative))
-            (versions nil))
+            (monthly (make-hash-table :test 'equal))
+            (months nil))
         (when log
+          ;; oldest first, so the last hash kept for a month is the
+          ;; newest commit of that month
           (dolist (line (nreverse (split-string log "\n" t)))
             (let ((fields (split-string line "\t")))
-              (when (and (car fields) (cadr fields))
-                (let ((text (keyfreq--git repo-dir "show"
-                                          (concat (car fields) ":" relative))))
-                  (when text
-                    (push (cons (cadr fields) text) versions)))))))
-        (nreverse versions)))))
+              (when (and (car fields) (cadr fields)
+                         (> (length (cadr fields)) 6))
+                (let ((month (substring (cadr fields) 0 7)))
+                  (unless (gethash month monthly)
+                    (push month months))
+                  (puthash month (cons (car fields) (cadr fields))
+                           monthly))))))
+        (let ((versions nil))
+          (dolist (month (nreverse months))
+            (let* ((commit (gethash month monthly))
+                   (text (keyfreq--git repo-dir "show"
+                                       (concat (car commit) ":" relative))))
+              (when text
+                (push (cons (cdr commit) text) versions))))
+          (nreverse versions))))))
 
 (defun keyfreq--read-file-entries (file)
   "Parse FILE as a keyfreq log."
@@ -602,7 +622,7 @@ the indexes point into NAMES."
                  (command-name (symbol-name (cdr key))))
              (dolist (name (list mode-name command-name))
                (unless (gethash name index)
-                 (setq names (append names (list name)))
+                 (push name names)
                  (puthash name (1- (length names)) index)))
              (push (list period
                          (gethash mode-name index)
@@ -611,7 +631,7 @@ the indexes point into NAMES."
                    rows))))
        (cdr snapshot))
       (setq period (1+ period)))
-    (list (nreverse periods) names (nreverse rows))))
+    (list (nreverse periods) (nreverse names) (nreverse rows))))
 
 (defun keyfreq--json-history (periods names rows)
   "Return `keyfreq--json-history-1' with HTML-significant characters escaped."
