@@ -167,7 +167,19 @@ A save now patches the file in place:
 The writer is also safer: it writes through a temporary file and renames it into
 place, it never drops the in-memory deltas unless the data reached the disk, and
 a truncated or damaged file is copied to `keyfreq-file.corrupt-<timestamp>`
-before the readable entries are salvaged, instead of wiping the history.
+before the readable entries are salvaged, instead of wiping the history.  The
+same applies to the recorded-keys side file.
+
+`M-x keyfreq-reset` clears everything the statistics consist of: the rollup,
+the recorded keys and the whole daily-archive directory, plus both in-memory
+tables.  It deletes nothing when another Emacs holds the lock.
+
+One caveat on the lock: it is a local PID file.  It keeps two Emacsen on the
+*same machine* from clobbering each other; a home directory shared over the
+network with another machine is not covered, since a lock held there looks
+stale locally and is removed.  A mandatory save waits at most
+`keyfreq-lock-retries` tenths of a second for the lock and then leaves the new
+counts in memory for the next autosave, so quitting Emacs never hangs on it.
 
 ### One file per day
 
@@ -284,6 +296,7 @@ folder, which holds the inlined `style.css` and `script.js`:
 | `keyfreq-json` | The raw statistics as JSON. |
 | `keyfreq-sort-file` | One-off normalisation: sort the statistics file by key. |
 | `keyfreq-rebuild-rollup` | Regenerate `keyfreq-file` from the baseline and the daily archives. |
+| `keyfreq-reset` | Delete all statistics: the data file, the recorded keys and the daily archives. |
 | `keyfreq-save-now` | Save the counters immediately. |
 | `keyfreq-where-is` | Keys a command is bound to; pass a keymap to see a mode's own bindings. |
 
@@ -304,11 +317,12 @@ folder, which holds the inlined `style.css` and `script.js`:
 | `keyfreq-excluded-commands` | `nil` | Commands that are never counted (noise such as `mouse-*`). |
 | `keyfreq-excluded-regexp` | `nil` | Regexps of commands that are never counted. |
 | `keyfreq-autosave-timeout` | `600` | Seconds between automatic saves. |
+| `keyfreq-lock-retries` | `50` | Tenths of a second a mandatory save waits for the lock before giving up; the counts stay in memory for the next autosave. |
 
 ## Running the tests
 
 ``` sh
-emacs --batch -l test/keyfreq-tests.el        # persistence, 62 assertions
+emacs --batch -l test/keyfreq-tests.el        # persistence, 74 assertions
 emacs --batch -l test/keyfreq-html-tests.el   # the report, 64 assertions
 ```
 

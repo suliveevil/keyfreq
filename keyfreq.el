@@ -17,6 +17,20 @@
 ;; the Free Software Foundation; either version 3 of the License, or
 ;; (at your option) any later version.
 ;;
+;; Version 1.9 - 2026
+;; * Robustness pass: a mandatory save gives up on a live lock after
+;;   `keyfreq-lock-retries' tenths of a second instead of hanging Emacs
+;;   on quit; `keyfreq-reset' also deletes the recorded keys and the
+;;   daily archives, and no longer clears the tables when it cannot
+;;   lock; turning `keyfreq-mode' off removes the prompt advice; a
+;;   damaged keys file is backed up and rewritten instead of failing on
+;;   every later save.
+;; * The file is now lexically bound and declares its variables before
+;;   their first use, so it byte-compiles without warnings.
+;; * The git history lookup resolves symlinked paths and materialises
+;;   one snapshot per month instead of one `git show' per commit.
+;; * `keyfreq-excluded-regexp' gets its proper custom type.
+
 ;; Version 1.8 - 2026
 ;; * Save in place: an existing entry keeps its line and only its
 ;;   counter is rewritten; unknown commands are appended before the
