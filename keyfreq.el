@@ -805,6 +805,10 @@ triggering a rebuild of a different one.")
 (defun keyfreq-rebuild-rollup ()
   "Rebuild `keyfreq-file' from the baseline plus every daily archive."
   (interactive)
+  (keyfreq--with-file-lock #'keyfreq--rebuild-rollup-locked))
+
+(defun keyfreq--rebuild-rollup-locked ()
+  "Rebuild `keyfreq-file' while its lock is held."
   (let ((dir (keyfreq--daily-dir)))
     (unless (file-directory-p dir)
       (user-error "No daily archives in %s" dir))
@@ -959,8 +963,14 @@ Those are not keystrokes, and they add noise to the Shortcut column."
   (when alist
     (format " data-keys=\"%s\""
             (keyfreq--html-escape
-             (mapconcat (lambda (pair) (format "%s:%d" (car pair) (cdr pair)))
-                        alist "|")))))
+             (concat "["
+                     (mapconcat
+                      (lambda (pair)
+                        (format "[%s,%d]"
+                                (json-encode-string (car pair))
+                                (cdr pair)))
+                      alist ",")
+                     "]")))))
 
 (defun keyfreq--html-printable (string)
   "Return STRING with every non-printing character replaced by ?.
@@ -1365,7 +1375,7 @@ backups, if any, are left alone."
 
 
 (defun keyfreq-file-release-lock ()
-  (when (file-exists-p keyfreq-file-lock)
+  (when (eq (keyfreq-file-owner) (emacs-pid))
     (delete-file keyfreq-file-lock)))
 
 
@@ -1378,6 +1388,17 @@ backups, if any, are left alone."
 	  (delete-file keyfreq-file-lock)))
   ;; Check again the lock existence (just in case...)
   (not (file-exists-p keyfreq-file-lock)))
+
+(defun keyfreq--with-file-lock (function)
+  "Call FUNCTION while holding `keyfreq-file-lock'."
+  (unless (keyfreq-file-is-unlocked)
+    (user-error "Keyfreq file is locked by another Emacs"))
+  (keyfreq-file-claim-lock)
+  (unless (eq (keyfreq-file-owner) (emacs-pid))
+    (user-error "Could not lock %s" keyfreq-file))
+  (unwind-protect
+      (funcall function)
+    (keyfreq-file-release-lock)))
 
 
 ;;; ------------------------------------------------------------------
@@ -1646,7 +1667,7 @@ without losing or duplicating counters."
              keyfreq-daily-archive
              (equal keyfreq--rollup-dirty (expand-file-name keyfreq-file)))
     (condition-case err
-        (keyfreq-rebuild-rollup)
+        (keyfreq--rebuild-rollup-locked)
       (error (message "keyfreq: rollup rebuild failed: %s"
                       (error-message-string err)))))
   (let ((pending (keyfreq--writable-table table)))
@@ -1670,10 +1691,13 @@ without losing or duplicating counters."
             (error (message "keyfreq: cannot write %s: %s"
                             (keyfreq--key-file) (error-message-string err))))
           (let ((ok (keyfreq--write-rollup pending)))
-            ;; the deltas are safe in the archive either way
-            (clrhash table)
+            ;; Daily archives are authoritative; without them, retain
+            ;; deltas until the rollup write succeeds.
+            (when (or keyfreq-daily-archive ok)
+              (clrhash table))
             (unless ok
-              (setq keyfreq--rollup-dirty (expand-file-name keyfreq-file)))
+              (when keyfreq-daily-archive
+                (setq keyfreq--rollup-dirty (expand-file-name keyfreq-file))))
             ok)))))))
 
 (defcustom keyfreq-lock-retries 50
@@ -1739,6 +1763,12 @@ the table cannot be saved."
 This is a one-off normalisation.  Sorting the file makes later
 in-place updates produce minimal, line-aligned diffs."
   (interactive)
+  (keyfreq--with-file-lock
+   (lambda ()
+     (keyfreq--sort-file-locked filename))))
+
+(defun keyfreq--sort-file-locked (&optional filename)
+  "Sort FILENAME while holding `keyfreq-file-lock'."
   (let* ((file (expand-file-name (or filename keyfreq-file)))
          (entries nil))
     (unless (file-exists-p file)
@@ -1747,14 +1777,15 @@ in-place updates produce minimal, line-aligned diffs."
       (let ((coding-system-for-read (or keyfreq-coding-system 'undecided)))
         (insert-file-contents file))
       (goto-char (point-min))
-      (skip-chars-forward " \t\n\r")
-      (when (eq (char-after) ?\() (forward-char 1))
-      (condition-case nil
-          (while (progn
-                   (skip-chars-forward " \t\n\r")
-                   (not (or (eobp) (eq (char-after) ?\)))))
-            (push (read (current-buffer)) entries))
-        (error nil)))
+      (let ((form (read (current-buffer))))
+        (unless (listp form)
+          (user-error "Invalid keyfreq list in %s" file))
+        (condition-case nil
+            (progn
+              (read (current-buffer))
+              (user-error "Unexpected trailing data in %s" file))
+          (end-of-file nil))
+        (setq entries form)))
     (unless entries
       (user-error "No entries found in %s" file))
     (let ((content
@@ -1768,17 +1799,11 @@ in-place updates produce minimal, line-aligned diffs."
                (insert "\n"))
              (insert ")")
              (buffer-string))))
-      (if (not (keyfreq-file-is-unlocked))
-          (user-error "Keyfreq file is locked by another Emacs")
-        (keyfreq-file-claim-lock)
-        (unwind-protect
-            (progn
-              (keyfreq--write-file content file
-                                   (keyfreq--writing-coding-system
-                                    (keyfreq--file-coding-system)))
-              (message "keyfreq: sorted %d entries in %s"
-                       (length entries) file))
-          (keyfreq-file-release-lock))))))
+      (keyfreq--write-file content file
+                           (keyfreq--writing-coding-system
+                            (keyfreq--file-coding-system file)))
+      (message "keyfreq: sorted %d entries in %s"
+               (length entries) file))))
 
 
 (defun keyfreq--backup-file (&optional file)

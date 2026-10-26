@@ -379,6 +379,27 @@
            (kf-ok "汇总照常写入" (= 4 (kf-get file '(org-mode . cmd-0))))
            (delete-directory dir t)))
 
+(kf-test "关闭日归档且汇总写入失败时保留增量"
+         (let* ((dir (make-temp-file "keyfreq-no-archive-" t))
+                (file (expand-file-name "keyfreq-log" dir))
+                (keyfreq-file file)
+                (keyfreq-file-lock (concat file ".lock"))
+                (keyfreq-daily-archive nil)
+                (table (kf-make-table '((org-mode cmd-0 4)))))
+           (setq keyfreq--rollup-dirty nil)
+           (with-temp-file file (insert "()"))
+           (cl-letf (((symbol-function 'keyfreq--write-rollup)
+                      (lambda (_pending) nil)))
+             (keyfreq--save-locked table))
+           (kf-ok "failed write leaves the delta in memory"
+                  (= 4 (gethash '(org-mode . cmd-0) table)))
+           (keyfreq-table-save table t)
+           (kf-ok "retry persists the delta exactly once"
+                  (= 4 (kf-get file '(org-mode . cmd-0))))
+           (kf-ok "successful retry clears the delta"
+                  (zerop (hash-table-count table)))
+           (delete-directory dir t)))
+
 (kf-test "按键会被单独记录，且第二次保存原地合并"
          (let* ((dir (make-temp-file "keyfreq-keys-" t))
                 (file (expand-file-name "keyfreq-log" dir))
@@ -560,6 +581,64 @@
            (delete-process holder)
            (ignore-errors (delete-file keyfreq-file-lock))
            (delete-file file)))
+
+(kf-test "重建与排序在读写期间持锁并校验所有权"
+         (let* ((dir (make-temp-file "keyfreq-maintenance-" t))
+                (file (expand-file-name "keyfreq-log" dir))
+                (keyfreq-file file)
+                (keyfreq-file-lock (concat file ".lock"))
+                (keyfreq-daily-directory (expand-file-name "days" dir)))
+           (setq keyfreq--rollup-dirty nil)
+           (with-temp-file file (insert "(((org-mode . old) . 9))"))
+           (make-directory keyfreq-daily-directory)
+           (with-temp-file (keyfreq--daily-baseline)
+             (insert "(((org-mode . rebuilt) . 3))"))
+           (write-region (number-to-string (emacs-pid)) nil
+                         keyfreq-file-lock nil 'silent)
+           (kf-ok "rebuild refuses an existing live lock"
+                  (condition-case nil
+                      (progn (keyfreq-rebuild-rollup) nil)
+                    (user-error t)))
+           (kf-ok "rebuild leaves the rollup unchanged while locked"
+                  (= 9 (kf-get file '(org-mode . old))))
+           (kf-ok "sort refuses an existing live lock"
+                  (condition-case nil
+                      (progn (keyfreq-sort-file) nil)
+                    (user-error t)))
+           (kf-ok "the competing lock is not removed"
+                  (and (file-exists-p keyfreq-file-lock)
+                       (eq (keyfreq-file-owner) (emacs-pid))))
+           (delete-file keyfreq-file-lock)
+           (keyfreq-rebuild-rollup)
+           (kf-ok "rebuild completes and releases its lock"
+                  (and (= 3 (kf-get file '(org-mode . rebuilt)))
+                       (not (file-exists-p keyfreq-file-lock))))
+           (keyfreq-sort-file)
+           (kf-ok "sort completes and releases its lock"
+                  (not (file-exists-p keyfreq-file-lock)))
+           (delete-directory dir t)))
+
+(kf-test "排序遇到损坏文件时不覆盖原数据"
+         (let* ((dir (make-temp-file "keyfreq-sort-damaged-" t))
+                (file (expand-file-name "keyfreq-log" dir))
+                (keyfreq-file file)
+                (keyfreq-file-lock (concat file ".lock"))
+                (before "(((org-mode . keep) . 7)\n")
+                (failure nil))
+           (with-temp-file file (insert before))
+           (condition-case err
+               (keyfreq-sort-file)
+             (error (setq failure err)))
+           (kf-ok "malformed input is rejected"
+                  (not (null failure)))
+           (kf-ok "the original bytes survive"
+                  (equal before
+                         (with-temp-buffer
+                           (insert-file-contents file)
+                           (buffer-string))))
+           (kf-ok "the lock is released after parse failure"
+                  (not (file-exists-p keyfreq-file-lock)))
+           (delete-directory dir t)))
 
 (princ (format "\n----------------------------------------\n%d passed, %d failed\n"
                kf-pass kf-fail))

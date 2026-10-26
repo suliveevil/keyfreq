@@ -473,6 +473,22 @@
 
     function parseKeyAttr(value) {
         if (!value) return null;
+        try {
+            var parsed = JSON.parse(value);
+            if (Array.isArray(parsed)) {
+                var valid = parsed.filter(function (pair) {
+                    return Array.isArray(pair) &&
+                        typeof pair[0] === "string" &&
+                        Number.isSafeInteger(pair[1]) &&
+                        pair[1] > 0;
+                });
+                return valid.length ? valid : null;
+            }
+        } catch (e) {
+            /* Older reports use the pipe-delimited representation below. */
+        }
+
+        /* Keep previously generated HTML reports readable. */
         var out = [];
         value.split("|").forEach(function (part) {
             var at = part.lastIndexOf(":");
@@ -753,9 +769,7 @@
             var text = entry ? entry.text : "";
             var attr = "";
             if (entry && entry.keys) {
-                attr = " data-keys=\"" + escapeHTML(entry.keys.map(function (pair) {
-                    return pair[0] + ":" + pair[1];
-                }).join("|")) + "\"";
+                attr = " data-keys=\"" + escapeHTML(JSON.stringify(entry.keys)) + "\"";
             }
             return "<tr><td>" + number(count) + "</td><td>" +
                 percent.toFixed(2) + "%</td><td>" +

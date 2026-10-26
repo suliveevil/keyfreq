@@ -79,6 +79,12 @@
                    (not (equal (keyfreq--html-id "a/b-mode" used)
                                (keyfreq--html-id "a-b-mode" used))))))
 
+(kfh-test "recorded key attributes preserve separator characters"
+         (kfh-ok "keys are encoded as JSON pairs"
+                 (equal
+                  " data-keys=\"[[&quot;|&quot;,2],[&quot;C-n&quot;,3]]\""
+                  (keyfreq--html-keys-attr '(("|" . 2) ("C-n" . 3))))))
+
 (kfh-test "shortcuts are resolved in the mode's own keymap"
          (require 'dired)
          (kfh-ok "a mode map is found by the <mode>-map convention"
@@ -209,9 +215,13 @@
            (keyfreq-html-v2 out nil)
            (let ((html (kfh-slurp out)))
              (kfh-ok "the typed characters are listed as shortcuts"
-                     (string-match-p "data-keys=\"a:60|b:40\"" html))
+                     (string-match-p
+                      "data-keys=\"\\[\\[&quot;a&quot;,60\\],\\[&quot;b&quot;,40\\]\\]\""
+                      html))
              (kfh-ok "both bindings of a command keep their own counts"
-                     (string-match-p "data-keys=\"C-n:10|&lt;down&gt;:5\"" html))
+                     (string-match-p
+                      "data-keys=\"\\[\\[&quot;C-n&quot;,10\\],\\[&quot;&lt;down&gt;&quot;,5\\]\\]\""
+                      html))
              (kfh-ok "the Shortcut column shows the recorded keys"
                      (string-match-p ">a, b</td>" html)))
            (delete-file log) (delete-file keyfreq-key-file) (delete-file out)))
