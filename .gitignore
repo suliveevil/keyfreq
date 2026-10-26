@@ -2,3 +2,5 @@
 *.elc
 \#*\#
 .\#*
+.DS_Store
+/.workbuddy
